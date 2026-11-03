@@ -26,6 +26,7 @@ SOURCE_FILES=(
     'docs/raw-precapture.md',
     'docs/releases.md',
     'docs/stop-file.md',
+    'docs/xpan.md',
     'docs/validation-summary.json',
     'docs/validation-v0.2.0.md',
     'docs/validation.md',
@@ -110,6 +111,8 @@ SOURCE_FILES=(
     'z8prores/menu.py',
     'z8prores/package.py',
     'z8prores/patcher.py',
+    'z8xpan/__init__.py',
+    'z8xpan/patcher.py',
 )
 CODE_FILES=('resources/precapture.bin','resources/pixelshift.bin','resources/pixelshift-af.bin','resources/opengate.bin')
 MANIFEST='release-manifest.json'

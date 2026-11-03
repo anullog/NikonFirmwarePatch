@@ -9,7 +9,7 @@ sys.dont_write_bytecode=True
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from z8prores.package import Package,require_official_input
-from features import FEATURES,compose
+from features import FEATURES,PROTOTYPES,compose
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
@@ -23,8 +23,8 @@ def main():
         if not names:continue
         _,detail,rows=compose(package.eg,names,check_recipe=False)
         key='+'.join(names)
-        # Reviewed features keep their v0.3.0 bit ids; locked-banks is an unreviewed prototype suffix.
-        ident='z8-c311-v030-'+''.join('1' if f in names else '0' for f in FEATURES if f!='locked-banks')+('-lockbanks-proto' if 'locked-banks' in names else '')
+        # Reviewed features keep their v0.3.0 bit ids; each unreviewed prototype adds its own suffix.
+        ident='z8-c311-v030-'+''.join('1' if f in names else '0' for f in FEATURES if f not in PROTOTYPES)+''.join(PROTOTYPES[f] for f in names if f in PROTOTYPES)
         profiles[key]=dict(id=ident,features=names,patches=rows)
         print(key,len(rows),flush=True)
     catalog=[];lookup={}

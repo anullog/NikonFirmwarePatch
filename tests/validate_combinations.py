@@ -46,7 +46,7 @@ def main():
         reject('wrong version',lambda:verify_pair(original,packet,list(FEATURES),expected_version='00.01',expected_tag='t0'))
         reject('wrong tag',lambda:verify_pair(original,packet,list(FEATURES),expected_version='00.00',expected_tag='t1'))
         reject('tag without version',lambda:verify_pair(original,packet,list(FEATURES),expected_tag='t0'))
-        for name,at in [('unrelated data',0x2400000),('pre-capture code',0x890010),('shared strings',0x770010),('shared bank',0x820000),('D10 hook',0x62E150),('PS11 callback',0x4BF1670),('locked-bank routine',0x75F904),('locked-bank custom gate',0xF7E0A8)]:
+        for name,at in [('unrelated data',0x2400000),('pre-capture code',0x890010),('shared strings',0x770010),('shared bank',0x820000),('D10 hook',0x62E150),('PS11 callback',0x4BF1670),('locked-bank routine',0x75F904),('locked-bank custom gate',0xF7E0A8),('XPan routine',0x766004),('XPan bank copy hook',0xEB62C4)]:
             bad=bytearray(eg);bad[at]^=1;bad[-2:]=binascii.crc_hqx(bad[:-2],0).to_bytes(2,'big')
             damaged,_=pkg.replace_eg(bytes(bad),'eg2070_0000t0.bi')
             reject('valid checksums with '+name+' changed',lambda:verify_pair(original,damaged,list(FEATURES)))

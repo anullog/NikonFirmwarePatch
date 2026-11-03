@@ -1,4 +1,4 @@
-"""Compose independent choices against one exact original C3.11 payload; locked-banks is a prototype."""
+"""Compose independent choices against one exact original C3.11 payload; locked-banks and xpan are prototypes."""
 import binascii
 import json
 import re
@@ -9,7 +9,8 @@ from z8prores.menu import Image
 from z8patch.compiled import load
 from z8patch.shared import Strings, bank, loader
 
-FEATURES = ('prores','precapture','pixelshift','opengate-nraw','locked-banks')
+FEATURES = ('prores','precapture','pixelshift','opengate-nraw','locked-banks','xpan')
+PROTOTYPES = {'locked-banks': '-lockbanks-proto', 'xpan': '-xpan-proto'}
 ROOT = Path(__file__).resolve().parent
 STOCK_SHA = 'f85e0138e2f5e660ece8560de62e0d12cb795e0e14983e50f20b61dce906c46c'
 
@@ -69,6 +70,10 @@ def compose(eg, features, compiler='clang', code_source='prebuilt', *, check_rec
         from z8lockbank.patcher import build_main
         part, detail['locked-banks'] = build_main(eg)
         merge('locked-banks',part)
+    if 'xpan' in chosen:
+        from z8xpan.patcher import build_main
+        part, detail['xpan'] = build_main(eg,strings)
+        merge('xpan',part)
     detail['strings'] = strings.emit(img)
     detail['bank'] = bank(img,chosen)
     detail['loader'] = loader(img,chosen)

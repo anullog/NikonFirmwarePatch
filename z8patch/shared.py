@@ -5,7 +5,7 @@ from z8prores.a64 import Block
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN
 
 BASE = 0x40160000
-STRING_IDS = {'opengate-nraw': (3137, 5), 'pixelshift': (3142, 5), 'prores': (3147, 6)}
+STRING_IDS = {'opengate-nraw': (3137, 5), 'pixelshift': (3142, 5), 'prores': (3147, 6), 'xpan': (3153, 1)}
 TEXT = 0x408D0000
 TABLES = 0x408E0000
 BANK = 0x40980000
@@ -26,11 +26,13 @@ class Strings:
         if not self.groups:
             return {}
         text, tables = bytearray(), bytearray()
+        # 3137..3152 for the reviewed features; later ids extend the table only when selected
+        last = max([3153] + [sum(STRING_IDS[name]) for name in self.groups])
         for language in range(36):
             table = img.u64(0x311C5A0+8*language)-BASE
             blob = img.u64(0x387AF58+8*language)-BASE
             offsets = list(struct.unpack_from('<3137i', img.old, table))
-            for ident in range(3137, 3153):
+            for ident in range(3137, last):
                 value = ''
                 for name, translations in self.groups.items():
                     first, count = STRING_IDS[name]
@@ -39,14 +41,14 @@ class Strings:
                 offsets.append(TEXT+len(text)-BASE-blob)
                 text.extend(value.encode('utf-16le'))
             offsets.append(TEXT+len(text)-BASE-blob)
-            require(len(offsets) == 3154, 'Shared string table shape')
+            require(len(offsets) == last+1, 'Shared string table shape')
             at = TABLES+len(tables)
-            tables.extend(struct.pack('<3154i', *offsets))
+            tables.extend(struct.pack(f'<{last+1}i', *offsets))
             img.put(0x311C5A0+8*language, struct.pack('<Q', at), f'shared language directory {language}')
         require(TEXT+len(text) <= TABLES and TABLES+len(tables) <= 0x40950000, 'Shared strings overflow')
         img.put(TEXT-BASE, text, 'shared selected-feature strings', expect_zero=True)
         img.put(TABLES-BASE, tables, 'shared 36 language offset tables', expect_zero=True)
-        return dict(features=sorted(self.groups), entries=3154, text_bytes=len(text), table_bytes=len(tables))
+        return dict(features=sorted(self.groups), entries=last+1, text_bytes=len(text), table_bytes=len(tables))
 
 
 def bank(img, features):

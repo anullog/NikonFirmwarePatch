@@ -33,15 +33,16 @@ def main():
     if a.check and (a.output or a.version or a.tag != 'p0' or a.interactive or a.compiler or a.code_source != 'prebuilt'):
         ap.error('--check cannot be combined with output options')
     if a.interactive:
-        # 1-5 keep their v0.3.0 meanings; the unreviewed prototype is only ever an explicit extra choice.
-        print('1: ProRes quality / ProRes 画质\n2: RAW pre-capture / RAW 预拍摄\n3: Pixel shift merge / 像素偏移合成\n4: Open gate + N-RAW quality / 开放门＋N-RAW 四档\n5: All reviewed features (1-4) / 全选已审核功能（1-4）\n6: Locked menu banks (prototype) / 锁定菜单库（原型）')
-        choice=input('Select numbers separated by commas / 用逗号分隔 [1,2,3,4 or 5; add 6 for the prototype]: ').strip()
+        # 1-5 keep their v0.3.0 meanings; unreviewed prototypes are only ever explicit extra choices.
+        print('1: ProRes quality / ProRes 画质\n2: RAW pre-capture / RAW 预拍摄\n3: Pixel shift merge / 像素偏移合成\n4: Open gate + N-RAW quality / 开放门＋N-RAW 四档\n5: All reviewed features (1-4) / 全选已审核功能（1-4）\n6: Locked menu banks (prototype) / 锁定菜单库（原型）\n7: XPan image area (prototype) / XPan 影像区域（原型）')
+        choice=input('Select numbers separated by commas / 用逗号分隔 [1,2,3,4 or 5; add 6 or 7 for prototypes]: ').strip()
         parts=[v.strip() for v in choice.split(',')]
-        reviewed=[f for f in FEATURES if f!='locked-banks']
-        base=[p for p in parts if p!='6']
+        extra={'6':'locked-banks','7':'xpan'}
+        reviewed=[f for f in FEATURES if f not in extra.values()]
+        base=[p for p in parts if p not in extra]
         require(parts and len(parts)==len(set(parts)) and (base==['5'] or all(p in ('1','2','3','4') for p in base)),
-                'Select 1,2,3,4 or 5 for all reviewed features; add 6 for locked banks')
-        a.features=(reviewed if base==['5'] else [reviewed[int(p)-1] for p in base])+(['locked-banks'] if '6' in parts else [])
+                'Select 1,2,3,4 or 5 for all reviewed features; add 6 or 7 for prototypes')
+        a.features=(reviewed if base==['5'] else [reviewed[int(p)-1] for p in base])+[extra[p] for p in parts if p in extra]
     selected = a.features or ['prores']
     require(a.firmware.is_file(), 'Input must be a regular firmware file')
     require(a.firmware.stat().st_size == PACKAGE_BYTES, 'Unsupported firmware length')
