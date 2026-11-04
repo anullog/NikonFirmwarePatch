@@ -16805,35 +16805,35 @@
       "bytes": 4,
       "purpose": "xpan: display direct input start: record live view running",
       "old_sha256": "64b290e9eaabcd0b6a686edc942abee2a874e206564a25bac4f57d1aeefbd2f7",
-      "new_sha256": "9b04cfd2c4dfa4051c7cf9a5645ed8a837bedd9dff320a10d7f71e590eb08e95"
+      "new_sha256": "8540bd37dddef339ea75af40f4128ddcc02f97f1709d64ec5833820f81c95ec9"
     },
     {
       "offset": "0x14a498",
       "bytes": 4,
       "purpose": "xpan: display direct input stop: record live view stopped",
       "old_sha256": "64b290e9eaabcd0b6a686edc942abee2a874e206564a25bac4f57d1aeefbd2f7",
-      "new_sha256": "d1f5176d988b190d3a76a5fba70feed0264d13bbe256e0b80f1710323e55a71a"
+      "new_sha256": "8fb8a5351d98fd70d68843dca9e5c1652703b0a3fd2e53c67e27c20d4e3b0f91"
     },
     {
       "offset": "0x14d198",
       "bytes": 4,
       "purpose": "xpan: overlay layer size store: record overlay width and height",
       "old_sha256": "498a50a7ac8002ed1d79c691879ec3d6e2739c30c1b39e039c8e642e898df204",
-      "new_sha256": "496be737ebaafcbe0064bbc53a08d12a56ed7e91588dd4b0c3b908852b6753c4"
+      "new_sha256": "d7cf3131620eaaab53d6ad847c2a2b282f4373e763ee4bc89f0f31b3cdcf0b67"
     },
     {
       "offset": "0x16f9d0",
       "bytes": 4,
       "purpose": "xpan: overlay bank request: paint 65:24 bars first",
       "old_sha256": "ecb77427670ca9262d68ac3056c34639b95aa118fade765396f3c6aa402b3fa9",
-      "new_sha256": "8a04bcaf30195f71c8467b8bc244826821d3b499debd5b1d1cb5270fbb13b1d2"
+      "new_sha256": "98a2b0df9e48ee5fc344c60085dbf5f552832db6ded8e38b8b36e705303ea507"
     },
     {
       "offset": "0x766000",
-      "bytes": 1536,
+      "bytes": 1572,
       "purpose": "xpan: routine: XPan menu row, entry/enable callbacks, flag bank copy",
-      "old_sha256": "80422bc3d307b4a25bdafcc84ac7fb01cb55a09810e8b0f37bb12e0edb5c48ca",
-      "new_sha256": "4b422843ffe547111627b9abfb97775352ef2dc7367fbc6fa26c0640588806d8"
+      "old_sha256": "130a18972fc210031938ab0588fb1613f9a034b72854e42650db49c6c29790ec",
+      "new_sha256": "4c512a4a3f138291d7ece3a488d679985b2422e0e6e03167836996bc1789f0ad"
     },
     {
       "offset": "0x767000",
@@ -16861,7 +16861,7 @@
       "bytes": 40,
       "purpose": "xpan: Choose image area callbacks (new entry and enable, stock others)",
       "old_sha256": "2c34ce1df23b838c5abf2a7f6437cca3d3067ed509ff25f11df6b11b582b51eb",
-      "new_sha256": "5c242b65f163f2a54089a3ebcfd7eca2c402221a194be7751c6f51470abe78be"
+      "new_sha256": "f5346eb3c819d4d39bd341ddca9801c959727fc7abce3f9e6aedffb00d084d85"
     },
     {
       "offset": "0x767ee0",
@@ -16903,7 +16903,7 @@
       "bytes": 4,
       "purpose": "xpan: slot copy, 32-bit case: hook for the XPan flag byte",
       "old_sha256": "6ff4d6f0d3eb629be68ebfc4fd5edb2a0f170360d7a0ba444c107b1822fc5655",
-      "new_sha256": "a4efd49d2b894ff29ba1f5ea0ccb3c93d2b3d44000f271809544252b2008b680"
+      "new_sha256": "0645ff4eb31ad9ff87b91bc9d29d41a0171ff2b754c2d0a73114f43bb5e25ab3"
     },
     {
       "offset": "0x1024d8c",

@@ -26,14 +26,14 @@ XPan 在相机内部按原厂 16:9 影像区域（设定值 4）运行，另加�
 - 第 3 阶段只改变 JPEG／HEIF 和预览尺寸，NEF 仍为 16:9（8280×4656）；尚不清楚相机是裁切还是压缩画面。
 - 黑边区域内的对焦点和图标仍会显示。
 - 选择影像区域行显示的图标仍为 16:9。
-- 用按钮加指令拨盘或 i 菜单切换影像区域时，不会显示 XPan；在 XPan 之后用这些方式选择 16:9，菜单可能仍标记 XPan。
+- 按钮加指令拨盘和 i 菜单不提供 XPan；用这些方式离开 XPan 后，XPan 会自动清除（影像区域不是 16:9 时，每帧同步例程清除标记）。
 - 菜单设定保存到存储卡时不包含 XPan 标记。
 
 ### 构建
 
 ```sh
-python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.12 --tag x7 --output build/xpan
-python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0412.bin --features xpan --version 04.12 --tag x7
+python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.13 --tag x8 --output build/xpan
+python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0413.bin --features xpan --version 04.13 --tag x8
 ```
 
 撤销方法：重新安装官方 C 3.11；Z8 支持降级。
@@ -45,7 +45,7 @@ python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0412.bin --features xpan
 | 位置 | 改动 |
 |---|---|
 | GUI 状态 2Ah | 回调和页面记录指向新的六行页面（原厂五行加 XPan，XPan 行复制 16:9 行，项目 35BBh） |
-| 各行 OK 动作 | 原厂各行先清除标记再执行原厂设定；XPan 设为 16:9 并置标记 |
+| 各行 OK 动作 | 原厂各行先清除标记再执行原厂设定；XPan 先设为 16:9，再置标记 |
 | 进入回调 | 光标和选中标记沿用原厂映射；16:9 且有标记时为 XPan |
 | 可用性回调 | XPan 与 16:9 在相同条件下可用（原厂条件 1Bh） |
 | `410162c4` | 逐项槽复制的 32 位分支：复制 07000603h 时一并复制标记字节，使每个照片拍摄菜单库保存自己的选择 |
@@ -86,14 +86,14 @@ Inside the camera, XPan runs as the stock 16:9 image area (value 4) plus an XPan
 - Milestone 3 changes only the JPEG/HEIF and preview sizes; NEFs stay 16:9 (8280×4656). Whether the camera crops or squeezes the picture is not yet known.
 - Focus points and icons inside the bar area still show.
 - The icon on the Choose image area row still shows 16:9.
-- Switching the image area with a button and command dial, or from the i menu, never shows XPan. Selecting 16:9 that way after XPan may leave XPan marked in the menu.
+- The button-and-dial switch and the i menu don't offer XPan. Leaving XPan that way clears it: whenever the image area isn't 16:9, the per-frame sync routine clears the flag.
 - Saving menu settings to a card doesn't include the XPan flag.
 
 ### Build
 
 ```sh
-python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.12 --tag x7 --output build/xpan
-python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0412.bin --features xpan --version 04.12 --tag x7
+python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.13 --tag x8 --output build/xpan
+python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0413.bin --features xpan --version 04.13 --tag x8
 ```
 
 To undo, install official C 3.11 again; Z8 accepts downgrades.
@@ -105,7 +105,7 @@ To undo, install official C 3.11 again; Z8 accepts downgrades.
 | Site | Change |
 |---|---|
 | GUI state 2Ah | Callbacks and page record point to a new six-row page: the stock five rows plus XPan, a copy of the 16:9 row with item 35BBh |
-| Row OK actions | Each stock row clears the flag, then runs its stock setter; XPan sets 16:9 and the flag |
+| Row OK actions | Each stock row clears the flag, then runs its stock setter; XPan sets 16:9 first, then the flag |
 | Entry callback | Cursor and mark follow the stock mapping, and XPan when the value is 16:9 and the flag is set |
 | Enable callback | XPan is available under the same condition as 16:9 (stock condition 1Bh) |
 | `410162c4` | 32-bit case of the per-item slot copy: copying 07000603h also copies the flag byte, so each photo shooting menu bank keeps its own choice |
