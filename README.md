@@ -23,7 +23,7 @@
 | `pixelshift` | 机内浏览、选择像素位移组并合成 NEFX；当前仅支持每组在新建文件夹中拍摄，编号从 `0001` 开始 |
 | `opengate-nraw` | FX 3:2 开放门 8.3K 30／25／24p，以及 N-RAW High／Fine／Normal／Basic 四档 |
 | `locked-banks` | **原型，未经审核或实机测试；仅限源码检出，不在 v0.3.0-r1 Release 中。** 菜单库像已保存的预设：切换离开时丢弃更改，除非再次选择当前库。见 [docs/locked-banks.md](docs/locked-banks.md) |
-| `xpan` | **原型第 1 阶段，未经审核或实机测试；仅限源码检出。** 在“选择影像区域”中加入 XPan (36×13)；目前按 16:9 拍摄。见 [docs/xpan.md](docs/xpan.md) |
+| `xpan` | **原型第 2 阶段，未经审核或实机测试；仅限源码检出。** 在“选择影像区域”中加入 XPan (36×13)，背屏实时取景显示 65:24 黑边；目前仍按 16:9 拍摄。见 [docs/xpan.md](docs/xpan.md) |
 
 四项已审核功能的任意非空选择共 15 种，加上 `locked-banks` 和 `xpan` 原型共 63 种。ProRes 与“开放门＋N-RAW”可分别构建；开放门和 N-RAW 四档合为一个选项。
 
@@ -83,7 +83,7 @@ Windows 使用 `py -3 -m venv .venv` 创建环境，用 `.\.venv\Scripts\Activat
 | `pixelshift` | In-camera pixel-shift group browsing, selection and NEFX merging; currently requires each group to be captured in a new folder with numbering starting at `0001` |
 | `opengate-nraw` | FX 3:2 open gate at 8.3K 30/25/24p and N-RAW High/Fine/Normal/Basic |
 | `locked-banks` | **Prototype, not reviewed or camera-tested; source checkout only, not in the v0.3.0-r1 Release.** Menu banks act as saved presets: changes are dropped when you switch away unless you select the active bank again. See [docs/locked-banks.md](docs/locked-banks.md) |
-| `xpan` | **Prototype milestone 1, not reviewed or camera-tested; source checkout only.** Adds XPan (36×13) to Choose image area; it shoots 16:9 for now. See [docs/xpan.md](docs/xpan.md) |
+| `xpan` | **Prototype milestone 2, not reviewed or camera-tested; source checkout only.** Adds XPan (36×13) to Choose image area, with 65:24 black bars in rear-monitor live view; it still shoots 16:9. See [docs/xpan.md](docs/xpan.md) |
 
 Choose any nonempty subset of the four reviewed features: 15 combinations, or 63 with the `locked-banks` and `xpan` prototypes. ProRes and open gate/N-RAW can be built separately; open gate and the four N-RAW tiers are one option.
 

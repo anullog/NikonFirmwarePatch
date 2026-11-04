@@ -6,7 +6,7 @@
 
 `--features xpan` 在**照片拍摄菜单 → 影像区域 → 选择影像区域**中加入 **XPan (36×13)**，即 65:24 的全宽画幅（8256×3048）。
 
-**原型，第 1 阶段。** 未经审核或实机测试，配方为推导所得。目前只加入菜单项：选择 XPan 后，相机按 16:9 拍摄，取景和文件均为 16:9。交互菜单中为选项 7，从不包含在选项 5 中。
+**原型，第 2 阶段。** 未经审核或实机测试，配方为推导所得。选择 XPan 后，背屏实时取景显示 65:24 黑边；相机仍按 16:9 拍摄，文件为 16:9。交互菜单中为选项 7，从不包含在选项 5 中。
 
 ### 设计
 
@@ -15,12 +15,15 @@ XPan 在相机内部按原厂 16:9 影像区域（设定值 4）运行，另加�
 | 阶段 | 结果 | 状态 |
 |---|---|---|
 | 1 | 菜单中的 XPan 行；可选择，按照片拍摄菜单库分别保存 | 模拟器通过；尚未实机测试 |
-| 2 | 实时取景、EVF 和图像查看中的 65:24 不透明黑边 | 尚未开始 |
+| 2 | 背屏实时取景中的 65:24 不透明黑边 | 模拟器通过；尚未实机测试 |
+| 2b | EVF 和图像查看中的黑边 | 尚未开始 |
 | 3 | JPEG／HEIF 8256×3048（M 6192×2286，S 4128×1524）及相应 EXIF | 尚未开始 |
 | 4 | NEF 裁切、回放、i 菜单、信息显示、对焦点范围 | 尚未开始 |
 
-### 已知限制（第 1 阶段）
+### 已知限制
 
+- 黑边只在背屏实时取景中显示；EVF、HDMI 输出和图像查看尚无黑边。
+- 黑边区域内的对焦点和图标仍会显示。
 - 选择影像区域行显示的图标仍为 16:9。
 - 用按钮加指令拨盘或 i 菜单切换影像区域时，不会显示 XPan；在 XPan 之后用这些方式选择 16:9，菜单可能仍标记 XPan。
 - 菜单设定保存到存储卡时不包含 XPan 标记。
@@ -28,8 +31,8 @@ XPan 在相机内部按原厂 16:9 影像区域（设定值 4）运行，另加�
 ### 构建
 
 ```sh
-python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.10 --tag x1 --output build/xpan
-python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0410.bin --features xpan --version 04.10 --tag x1
+python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.11 --tag x4 --output build/xpan
+python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0411.bin --features xpan --version 04.11 --tag x4
 ```
 
 撤销方法：重新安装官方 C 3.11；Z8 支持降级。
@@ -48,11 +51,18 @@ python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0410.bin --features xpan
 
 标记位于 `A03D482C2`，是照片拍摄菜单库组中 DS 07000602h 与 07000603h 之间的填充字节。
 
+第 2 阶段（黑边）：
+
+| 位置 | 改动 |
+|---|---|
+| `402aa36c` / `402aa498` | 背屏直接输入（实时取景）启动／停止时，记录运行状态（`408CFF00`，经文本段 RAM 别名写入） |
+| `402cf9d0` | 每帧提交 GUI 叠加层之前：XPan 生效且实时取景运行时，把第 0–151 行和第 530–681 行中 GUI 留空（透明）的像素改为不透明黑色，图标保留；65:24 画面为第 152–529 行（16:9 画面 576 行的中间 378 行）。CPU 写入前后清理缓存行。 |
+
 ## English
 
 `--features xpan` adds **XPan (36×13)** to **Photo shooting menu → Image area → Choose image area**: a full-width 65:24 frame (8256×3048).
 
-**Prototype, milestone 1.** Not reviewed or tested on a camera; its recipes are derived. So far it adds only the menu row: with XPan selected, the camera shoots 16:9, and both the view and the files are 16:9. In the interactive menu it is option 7 and is never part of option 5.
+**Prototype, milestone 2.** Not reviewed or tested on a camera; its recipes are derived. With XPan selected, rear-monitor live view shows 65:24 black bars; the camera still shoots 16:9 and the files are 16:9. In the interactive menu it is option 7 and is never part of option 5.
 
 ### Design
 
@@ -61,12 +71,15 @@ Inside the camera, XPan runs as the stock 16:9 image area (value 4) plus an XPan
 | Milestone | Result | Status |
 |---|---|---|
 | 1 | XPan row in the menu; selectable, saved per photo shooting menu bank | Emulator pass; not camera-tested |
-| 2 | Opaque 65:24 bars in live view, the EVF and image review | Not started |
+| 2 | Opaque 65:24 bars in rear-monitor live view | Emulator pass; not camera-tested |
+| 2b | Bars in the EVF and image review | Not started |
 | 3 | JPEG/HEIF at 8256×3048 (M 6192×2286, S 4128×1524) with matching EXIF | Not started |
 | 4 | NEF crop, playback, i menu, info display, AF point range | Not started |
 
-### Known limits (milestone 1)
+### Known limits
 
+- Bars show only in rear-monitor live view; the EVF, HDMI output and image review don't have them yet.
+- Focus points and icons inside the bar area still show.
 - The icon on the Choose image area row still shows 16:9.
 - Switching the image area with a button and command dial, or from the i menu, never shows XPan. Selecting 16:9 that way after XPan may leave XPan marked in the menu.
 - Saving menu settings to a card doesn't include the XPan flag.
@@ -74,8 +87,8 @@ Inside the camera, XPan runs as the stock 16:9 image area (value 4) plus an XPan
 ### Build
 
 ```sh
-python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.10 --tag x1 --output build/xpan
-python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0410.bin --features xpan --version 04.10 --tag x1
+python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.11 --tag x4 --output build/xpan
+python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0411.bin --features xpan --version 04.11 --tag x4
 ```
 
 To undo, install official C 3.11 again; Z8 accepts downgrades.
@@ -93,3 +106,10 @@ To undo, install official C 3.11 again; Z8 accepts downgrades.
 | `410162c4` | 32-bit case of the per-item slot copy: copying 07000603h also copies the flag byte, so each photo shooting menu bank keeps its own choice |
 
 The flag is at `A03D482C2`, the padding byte between DS 07000602h and 07000603h in the photo-bank group.
+
+Milestone 2 (bars):
+
+| Site | Change |
+|---|---|
+| `402aa36c` / `402aa498` | Rear-monitor direct input (live view) start/stop: record whether live view is running (`408CFF00`, written through the text section's RAM alias) |
+| `402cf9d0` | Before each GUI overlay frame is presented, with XPan active and live view running: every pixel the GUI left transparent in rows 0–151 and 530–681 becomes opaque black, and icons stay. The 65:24 picture is rows 152–529, the centre 378 rows of the 576-row 16:9 picture. Cache lines are cleaned around the CPU writes. |
