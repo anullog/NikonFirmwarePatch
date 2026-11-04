@@ -6,7 +6,7 @@
 
 `--features xpan` 在**照片拍摄菜单 → 影像区域 → 选择影像区域**中加入 **XPan (36×13)**，即 65:24 的全宽画幅（8256×3048）。
 
-**原型，第 2 阶段。** 未经审核或实机测试，配方为推导所得。选择 XPan 后，背屏实时取景显示 65:24 黑边；相机仍按 16:9 拍摄，文件为 16:9。交互菜单中为选项 7，从不包含在选项 5 中。
+**原型，第 2–3 阶段。** 未经审核或实机测试，配方为推导所得。选择 XPan 后，背屏实时取景显示 65:24 黑边（模拟器已验证）；EVF 黑边和 65:24 JPEG／HEIF 尺寸已构建，但只能在相机上验证。交互菜单中为选项 7，从不包含在选项 5 中。
 
 ### 设计
 
@@ -16,13 +16,14 @@ XPan 在相机内部按原厂 16:9 影像区域（设定值 4）运行，另加�
 |---|---|---|
 | 1 | 菜单中的 XPan 行；可选择，按照片拍摄菜单库分别保存 | 模拟器通过；尚未实机测试 |
 | 2 | 背屏实时取景中的 65:24 不透明黑边 | 模拟器通过；尚未实机测试 |
-| 2b | EVF 和图像查看中的黑边 | 尚未开始 |
-| 3 | JPEG／HEIF 8256×3048（M 6192×2286，S 4128×1524）及相应 EXIF | 尚未开始 |
+| 2b | EVF 中的黑边 | 已构建；模拟器不支持 EVF，待实机测试 |
+| 3 | JPEG／HEIF 8256×3048（M 6192×2288，S 4128×1528）及预览尺寸 | 实验性构建；模拟器无法拍摄 16:9 静态图像，待实机测试 |
 | 4 | NEF 裁切、回放、i 菜单、信息显示、对焦点范围 | 尚未开始 |
 
 ### 已知限制
 
-- 黑边只在背屏实时取景中显示；EVF、HDMI 输出和图像查看尚无黑边。
+- EVF 黑边假定 1280×960 面板上画面居中（第 244–715 行），尚未验证；HDMI 输出和图像查看尚无黑边。
+- 第 3 阶段只改变 JPEG／HEIF 和预览尺寸，NEF 仍为 16:9（8280×4656）；尚不清楚相机是裁切还是压缩画面。
 - 黑边区域内的对焦点和图标仍会显示。
 - 选择影像区域行显示的图标仍为 16:9。
 - 用按钮加指令拨盘或 i 菜单切换影像区域时，不会显示 XPan；在 XPan 之后用这些方式选择 16:9，菜单可能仍标记 XPan。
@@ -31,8 +32,8 @@ XPan 在相机内部按原厂 16:9 影像区域（设定值 4）运行，另加�
 ### 构建
 
 ```sh
-python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.11 --tag x4 --output build/xpan
-python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0411.bin --features xpan --version 04.11 --tag x4
+python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.12 --tag x7 --output build/xpan
+python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0412.bin --features xpan --version 04.12 --tag x7
 ```
 
 撤销方法：重新安装官方 C 3.11；Z8 支持降级。
@@ -55,14 +56,17 @@ python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0411.bin --features xpan
 
 | 位置 | 改动 |
 |---|---|
-| `402aa36c` / `402aa498` | 背屏直接输入（实时取景）启动／停止时，记录运行状态（`408CFF00`，经文本段 RAM 别名写入） |
-| `402cf9d0` | 每帧提交 GUI 叠加层之前：XPan 生效且实时取景运行时，把第 0–151 行和第 530–681 行中 GUI 留空（透明）的像素改为不透明黑色，图标保留；65:24 画面为第 152–529 行（16:9 画面 576 行的中间 378 行）。CPU 写入前后清理缓存行。 |
+| `402aa36c` / `402aa498` | 背屏（`15484000h`）和 EVF（`15480000h`）直接输入（实时取景）启动／停止时，分别记录运行状态（`408CFF00` 起，经文本段 RAM 别名写入） |
+| `402ad198` | 每帧写入叠加层尺寸时，按显示单元记录宽高（此处只用 x17，不改变条件标志） |
+| `402cf9d0` | 每帧提交 GUI 叠加层之前：XPan 生效且该单元实时取景运行时，16:9 画面高 = 宽 × 9/16、在面板上居中，65:24 画面高 = 宽 × 24/65（取偶数）、在 16:9 画面中居中；其上下 GUI 留空（透明）的像素改为不透明黑色，图标保留。只处理宽 1024（背屏，第 152–529 行）或 1280（EVF）的叠加层。CPU 写入前后清理缓存行。 |
+
+第 3 阶段（文件尺寸，实验性）：同一提交点调用的同步例程在 XPan 生效时，把 RAM 中静态图像尺寸表（`A02A946A4` 起，经 `41061928` 读取）的 16:9 项改为 65:24 值，XPan 关闭时恢复：JPEG L/M/S、三项全尺寸渲染、1920×1080／640×360／320×180／160×90 预览改为 1920×712／640×236／320×118／160×60。原始数据读出（8280×4656）不变。
 
 ## English
 
 `--features xpan` adds **XPan (36×13)** to **Photo shooting menu → Image area → Choose image area**: a full-width 65:24 frame (8256×3048).
 
-**Prototype, milestone 2.** Not reviewed or tested on a camera; its recipes are derived. With XPan selected, rear-monitor live view shows 65:24 black bars; the camera still shoots 16:9 and the files are 16:9. In the interactive menu it is option 7 and is never part of option 5.
+**Prototype, milestones 2–3.** Not reviewed or tested on a camera; its recipes are derived. With XPan selected, rear-monitor live view shows 65:24 black bars (emulator-checked). EVF bars and 65:24 JPEG/HEIF sizes are built but can only be checked on the camera. In the interactive menu it is option 7 and is never part of option 5.
 
 ### Design
 
@@ -72,13 +76,14 @@ Inside the camera, XPan runs as the stock 16:9 image area (value 4) plus an XPan
 |---|---|---|
 | 1 | XPan row in the menu; selectable, saved per photo shooting menu bank | Emulator pass; not camera-tested |
 | 2 | Opaque 65:24 bars in rear-monitor live view | Emulator pass; not camera-tested |
-| 2b | Bars in the EVF and image review | Not started |
-| 3 | JPEG/HEIF at 8256×3048 (M 6192×2286, S 4128×1524) with matching EXIF | Not started |
+| 2b | Bars in the EVF | Built; the emulator has no EVF, needs a camera test |
+| 3 | JPEG/HEIF at 8256×3048 (M 6192×2288, S 4128×1528) and preview sizes | Experimental build; the emulator can't capture 16:9 stills, needs a camera test |
 | 4 | NEF crop, playback, i menu, info display, AF point range | Not started |
 
 ### Known limits
 
-- Bars show only in rear-monitor live view; the EVF, HDMI output and image review don't have them yet.
+- EVF bars assume the picture is centred on the 1280×960 panel (rows 244–715), not yet confirmed; HDMI output and image review don't have bars.
+- Milestone 3 changes only the JPEG/HEIF and preview sizes; NEFs stay 16:9 (8280×4656). Whether the camera crops or squeezes the picture is not yet known.
 - Focus points and icons inside the bar area still show.
 - The icon on the Choose image area row still shows 16:9.
 - Switching the image area with a button and command dial, or from the i menu, never shows XPan. Selecting 16:9 that way after XPan may leave XPan marked in the menu.
@@ -87,8 +92,8 @@ Inside the camera, XPan runs as the stock 16:9 image area (value 4) plus an XPan
 ### Build
 
 ```sh
-python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.11 --tag x4 --output build/xpan
-python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0411.bin --features xpan --version 04.11 --tag x4
+python patch.py "/path/to/Z_8_0311.bin" --features xpan --version 04.12 --tag x7 --output build/xpan
+python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0412.bin --features xpan --version 04.12 --tag x7
 ```
 
 To undo, install official C 3.11 again; Z8 accepts downgrades.
@@ -111,5 +116,8 @@ Milestone 2 (bars):
 
 | Site | Change |
 |---|---|
-| `402aa36c` / `402aa498` | Rear-monitor direct input (live view) start/stop: record whether live view is running (`408CFF00`, written through the text section's RAM alias) |
-| `402cf9d0` | Before each GUI overlay frame is presented, with XPan active and live view running: every pixel the GUI left transparent in rows 0–151 and 530–681 becomes opaque black, and icons stay. The 65:24 picture is rows 152–529, the centre 378 rows of the 576-row 16:9 picture. Cache lines are cleaned around the CPU writes. |
+| `402aa36c` / `402aa498` | Direct input (live view) start/stop of the rear monitor (`15484000h`) and the EVF (`15480000h`): record per unit whether live view is running (from `408CFF00`, written through the text section's RAM alias) |
+| `402ad198` | Each frame's overlay size store: record width and height per unit (uses only x17 and leaves the flags alone) |
+| `402cf9d0` | Before each GUI overlay frame is presented, with XPan active and live view running on that unit: the 16:9 picture is width × 9/16, centred on the panel; the 65:24 window is width × 24/65 (even), centred in it. Every pixel above and below that the GUI left transparent becomes opaque black, and icons stay. Only overlays 1024 wide (rear monitor, rows 152–529) or 1280 wide (EVF) are painted. Cache lines are cleaned around the CPU writes. |
+
+Milestone 3 (file sizes, experimental): a sync routine called from the same present hook rewrites the 16:9 entries of the still-size table in RAM (from `A02A946A4`, read through `41061928`) to 65:24 values while XPan is active, and restores them when it is off: JPEG L/M/S, the three full-size rendering entries, and the 1920×1080/640×360/320×180/160×90 previews become 1920×712/640×236/320×118/160×60. The raw readout (8280×4656) is unchanged.

@@ -60,18 +60,27 @@ PINNED = {0x405DBE0C: (0x98, '6e08bf0521ed62638837f6f84730b9880fe8af8c3bb851ea1b
           0x405E69C0: (0x60, '84dbd5338c987625ad3d97a3c6201140ad886e1f95bf30dc1887217bea563d02')}
 STOCK_LABEL = 0x582                                          # "16:9 (36×20)" and its 35 translations
 TABLE_DIR, BLOB_DIR = 0x311C5A0, 0x387AF58
-# milestone 2: opaque bars painted into the rear-monitor overlay just before each frame is presented
-LCD_BASE = 0x15484000                                        # display unit of the rear monitor (identity MMIO)
+# milestone 2: opaque bars painted into a display's overlay just before each frame is presented
+LCD_BASE, EVF_BASE = 0x15484000, 0x15480000                  # display units (identity MMIO): rear monitor, EVF
 START_SITE, START_NEXT = 0x402AA36C, 0x402AA370              # str w9,[x8,#0x100]: direct input start
 STOP_SITE, STOP_NEXT = 0x402AA498, 0x402AA49C                # str w9,[x8,#0x100]: direct input stop
 START_WORD = 0xB9010109
 PRESENT_SITE, F_PRESENT = 0x402CF9D0, 0x402AB1CC             # bl: bank request after the overlay address
-STATE_AT = 0x76FF00                                          # one zero-initialized byte: live view running
+OSIZE_SITE, OSIZE_NEXT, OSIZE_WORD = 0x402AD198, 0x402AD19C, 0xB92401BB   # str w27,[x13,#0x2400]: overlay size
+STATE_AT = 0x76FF00                                          # zero-initialized runtime state, see bars()
+UNIT_LCD, UNIT_EVF = 0x10, 0x20                              # per unit: +0 running, +8 overlay w, +10 overlay h
+OVERLAY_WIDTHS = (1024, 1280)                                # rear monitor 1024x682, EVF 1280x960
 TEXT_SECTION, TEXT_ALIAS = 0x40200000, 0xA0F800000           # writable RAM alias of the copied text section
 RAM_LO, RAM_HI = 0xA00000000, 0xB00000000                    # 402AB038 converts to the bus address itself
-LCD_W, LCD_H, ALPHA_OFFSET = 1024, 682, 0x155000            # YYUV (2 bytes/pixel), then alpha (1 byte/pixel)
-BAR_TOP, BAR_BOTTOM = 152, 530                               # 16:9 picture rows 53..628; 65:24 is 378 rows
 BLACK_Y, BLACK_PAIR = 0x00, 0x8080000080800000               # Y0 Y1 U V; the overlay conversion is full range
+# milestone 3: 16:9 entries of the still-size table (RAM data, read through 41061928) and their 65:24 values;
+# raw readout (8280x4656) is left at 16:9. Heights are multiples of 8 (thumbnails: of 2).
+SIZES = ((0xA02A94744, (8256, 4640), (8256, 3048)), (0xA02A94748, (6192, 3480), (6192, 2288)),
+         (0xA02A9474C, (4128, 2320), (4128, 1528)), (0xA02A94970, (8256, 4640), (8256, 3048)),
+         (0xA02A94974, (8256, 4640), (8256, 3048)), (0xA02A94978, (8256, 4640), (8256, 3048)),
+         (0xA02A947E0, (640, 360), (640, 236)), (0xA02A947F4, (320, 180), (320, 118)),
+         (0xA02A94808, (1920, 1080), (1920, 712)), (0xA02A9481C, (160, 90), (160, 60)))
+SIZE_TABLE_AT = 0x76FE00                                     # read-only copy of SIZES for the sync routine
 
 
 def ram(address):
@@ -95,7 +104,15 @@ def sub_x(rd, rn, rm): return 0xCB000000 | rm << 16 | rn << 5 | rd
 def and_x1(rd, rn): return 0x92400000 | rn << 5 | rd
 def movn_x0(rd): return 0x92800000 | rd
 def dc_civac(rt): return 0xD50B7E20 | rt
+def add_w_lsl(rd, rn, rm, sh): return 0x0B000000 | rm << 16 | sh << 10 | rn << 5 | rd
+def lsr_wi(rd, rn, sh): return 0x53000000 | sh << 16 | 31 << 10 | rn << 5 | rd
+def udiv_w(rd, rn, rm): return 0x1AC00800 | rm << 16 | rn << 5 | rd
+def umull(rd, rn, rm): return 0x9BA07C00 | rm << 16 | rn << 5 | rd
 DSB_SY = 0xD5033F9F
+
+
+def cbnz_x(blk, rt, target):
+    blk._rel(lambda pc: 0xB5000000 | ((blk._target(target) - pc) >> 2 & 0x7FFFF) << 5 | rt)
 
 
 def va(offset):
@@ -226,32 +243,68 @@ def code():
 
 
 def bars(blk):
-    """Milestone 2: 65:24 bars in rear-monitor live view (overlay pixels the GUI left transparent)."""
+    """Milestones 2 and 2b: 65:24 bars in live view on the rear monitor and the EVF.
+
+    Runtime state at STATE_AT (+1: size-table sync, see sizes()); per display unit at UNIT_LCD / UNIT_EVF:
+    +0 live view running, +8/+10 overlay width and height, each recorded where the firmware programs them.
+    The 16:9 picture is centred on the panel (rear monitor: rows 53..628 of 682).
+    """
     raws = {}
 
     def raw(word, text):
         raws[word] = text
         blk.raw(word)
 
-    # rear-monitor direct input (live view) started / stopped: keep one runtime byte
+    def unit_state(base_reg, scratch, lcd_label, evf_label, none_label):
+        """Branch to lcd_label or evf_label by display unit; flags are left untouched."""
+        blk.mov_x64(scratch, LCD_BASE)
+        raw(sub_x(scratch, base_reg, scratch), f'sub x{scratch}, x{base_reg}, x{scratch}')
+        blk.cbz_x(scratch, lcd_label)
+        blk.mov_x64(scratch, EVF_BASE)
+        raw(sub_x(scratch, base_reg, scratch), f'sub x{scratch}, x{base_reg}, x{scratch}')
+        blk.cbz_x(scratch, evf_label)
+        blk.b(none_label)
+
+    # direct input (live view) started / stopped, per unit
     for name, value, nxt in (('lv_start', 1, START_NEXT), ('lv_stop', 0, STOP_NEXT)):
         blk.label(name)
         raw(START_WORD, 'str w9, [x8, #0x100]')
-        blk.mov_x64(16, LCD_BASE)
-        raw(cmp_x(8, 16), 'cmp x8, x16')
-        blk.b_cond('ne', name + '_done')
-        blk.mov_x64(16, ram(va(STATE_AT)))
+        unit_state(8, 16, name + '_lcd', name + '_evf', name + '_done')
+        blk.label(name + '_lcd')
+        blk.mov_x64(16, ram(va(STATE_AT + UNIT_LCD)))
+        blk.b(name + '_set')
+        blk.label(name + '_evf')
+        blk.mov_x64(16, ram(va(STATE_AT + UNIT_EVF)))
+        blk.label(name + '_set')
         blk.mov_w(17, value)
         blk.strb_w(17, 16)
         blk.label(name + '_done')
         blk.b(nxt)
-    # bank request of the overlay: paint when XPan is active on the running rear-monitor live view
+    # overlay size store (layer 0): only x17 is free here and the flags of a preceding tst are still live
+    blk.label('osize')
+    raw(OSIZE_WORD, 'str w27, [x13, #0x2400]')
+    blk.mov_x64(17, LCD_BASE)
+    raw(sub_x(17, 13, 17), 'sub x17, x13, x17')
+    cbnz_x(blk, 17, 'osize_evf')
+    blk.mov_x64(17, ram(va(STATE_AT + UNIT_LCD + 8)))
+    blk.str_w(27, 17)
+    blk.b('osize_done')
+    blk.label('osize_evf')
+    blk.mov_x64(17, EVF_BASE)
+    raw(sub_x(17, 13, 17), 'sub x17, x13, x17')
+    cbnz_x(blk, 17, 'osize_done')
+    blk.mov_x64(17, ram(va(STATE_AT + UNIT_EVF + 8)))
+    blk.str_w(27, 17)
+    blk.label('osize_done')
+    blk.b(OSIZE_NEXT)
+    # bank request of the overlay: keep the size table in step with XPan (milestone 3), then paint when XPan
+    # is active on a running live view
     blk.label('present')
+    blk.mov_x(15, 30)
+    blk.bl('sync')
+    blk.mov_x(30, 15)
     blk.cmp_wi(1, 2)
     blk.b_cond('ne', 'flip')
-    blk.mov_x64(16, ram(va(STATE_AT)))
-    blk.ldrb_w(17, 16)
-    blk.cbz_w(17, 'flip')
     blk.mov_x64(16, FLAG)
     blk.ldrb_w(17, 16)
     blk.cbz_w(17, 'flip')
@@ -260,36 +313,66 @@ def bars(blk):
     blk.cmp_wi(17, VALUE_169)
     blk.b_cond('ne', 'flip')
     blk.ldr_x(9, 0, 8)
-    blk.mov_x64(16, LCD_BASE)
-    raw(cmp_x(9, 16), 'cmp x9, x16')
+    unit_state(9, 16, 'present_lcd', 'present_evf', 'flip')
+    blk.label('present_lcd')
+    blk.mov_x64(11, ram(va(STATE_AT + UNIT_LCD)))
+    blk.b('present_unit')
+    blk.label('present_evf')
+    blk.mov_x64(11, ram(va(STATE_AT + UNIT_EVF)))
+    blk.label('present_unit')
+    blk.ldrb_w(17, 11)
+    blk.cbz_w(17, 'flip')                       # live view not running on this unit
+    blk.ldrh_w(14, 11, 8)                       # overlay (panel) width
+    blk.ldrh_w(13, 11, 10)                      # overlay height
+    blk.cmp_wi(14, OVERLAY_WIDTHS[0])
+    blk.b_cond('eq', 'width_ok')
+    blk.cmp_wi(14, OVERLAY_WIDTHS[1])
     blk.b_cond('ne', 'flip')
+    blk.label('width_ok')
+    raw(add_w_lsl(8, 14, 14, 3), 'add w8, w14, w14, lsl #3')
+    raw(lsr_wi(8, 8, 4), 'lsr w8, w8, #4')      # 16:9 picture height = width * 9 / 16, centred on the panel
+    blk.cmp_w(8, 13)
+    blk.b_cond('hi', 'flip')
+    blk.sub_w(9, 13, 8)
+    raw(lsr_wi(9, 9, 1), 'lsr w9, w9, #1')      # 16:9 picture top
+    blk.lsl_wi(10, 14, 3)
+    raw(add_w_lsl(10, 10, 10, 1), 'add w10, w10, w10, lsl #1')
+    blk.mov_w(16, 65)
+    raw(udiv_w(10, 10, 16), 'udiv w10, w10, w16')
+    raw(lsr_wi(10, 10, 1), 'lsr w10, w10, #1')
+    blk.lsl_wi(10, 10, 1)                       # 65:24 height = width * 24 / 65, even
+    blk.sub_w(16, 8, 10)
+    raw(lsr_wi(16, 16, 1), 'lsr w16, w16, #1')
+    blk.add_w(16, 16, 9)                        # first 65:24 row
+    blk.add_w(17, 16, 10)                       # first row below the 65:24 window
     blk.ldr_x(4, 31, 0x28)                      # caller's overlay record: colour CPU address (bus = +400000000h)
-    blk.mov_x64(16, RAM_LO)
-    raw(cmp_x(4, 16), 'cmp x4, x16')
+    blk.mov_x64(12, RAM_LO)
+    raw(cmp_x(4, 12), 'cmp x4, x12')
     blk.b_cond('lo', 'flip')
-    blk.mov_x64(16, RAM_HI - LCD_W * LCD_H * 3)
-    raw(cmp_x(4, 16), 'cmp x4, x16')
+    blk.mov_x64(12, RAM_HI - 0x400000)
+    raw(cmp_x(4, 12), 'cmp x4, x12')
     blk.b_cond('hs', 'flip')
-    blk.mov_x64(16, ALPHA_OFFSET)
-    blk.add_x(3, 4, 16)
+    raw(umull(12, 14, 13), 'umull x12, w14, w13')
+    blk.add_x(3, 4, 12, lsl=1)                  # alpha plane follows the YYUV plane
     blk.mov_x(15, 30)
+    blk.stp_pre(17, 13, -16)
     blk.mov_w(5, 0)
-    blk.mov_w(6, BAR_TOP)
+    blk.mov_wr(6, 16)
     blk.bl('paint')
-    blk.mov_w(5, BAR_BOTTOM)
-    blk.mov_w(6, LCD_H)
+    blk.ldp_post(5, 6, 16)
     blk.bl('paint')
     raw(DSB_SY, 'dsb sy')
     blk.mov_x(30, 15)
     blk.label('flip')
     blk.b(F_PRESENT)
-    # paint rows [w5, w6): x3 alpha plane, x4 YYUV plane; transparent -> opaque black, icons kept
+    # paint rows [w5, w6) of width x14: x3 alpha plane, x4 YYUV plane; transparent -> opaque black, icons kept
     blk.label('paint')
     blk.label('row')
     blk.cmp_w(5, 6)
     blk.b_cond('hs', 'paint_done')
-    blk.add_x(7, 3, 5, lsl=10)
-    blk.add_x(8, 4, 5, lsl=11)
+    blk.madd_x(7, 5, 14, 3)
+    blk.madd_x(8, 5, 14, 31)
+    blk.add_x(8, 4, 8, lsl=1)
     for phase in ('inv', 'cln'):
         if phase == 'cln':
             blk.label('px_done')
@@ -302,7 +385,7 @@ def bars(blk):
         blk.add_xi(11, 11, 64)
         raw(dc_civac(11), 'dc civac, x11')
         blk.add_xi(9, 9, 64)
-        raw(cmp_xi(9, LCD_W), 'cmp x9, #0x400')
+        raw(cmp_x(9, 14), 'cmp x9, x14')
         blk.b_cond('lo', phase)
         raw(DSB_SY, 'dsb sy')
         if phase == 'inv':
@@ -315,10 +398,10 @@ def bars(blk):
             blk.mov_w(12, 0)
             blk.label('slow')
             blk.add_x(13, 9, 12)
-            blk.ldrb_idx(14, 7, 13)
-            blk.cmp_wi(14, 255)
+            blk.ldrb_idx(10, 7, 13)
+            blk.cmp_wi(10, 255)
             blk.b_cond('eq', 'slow_next')
-            blk.cbnz_w(14, 'opaque')
+            blk.cbnz_w(10, 'opaque')
             blk.add_x(16, 8, 13, lsl=1)         # Y of pixel p: 2p - (p & 1)
             raw(and_x1(17, 13), 'and x17, x13, #1')
             raw(sub_x(16, 16, 17), 'sub x16, x16, x17')
@@ -341,14 +424,55 @@ def bars(blk):
             blk.str_x(13, 12, 8)
             blk.label('next')
             blk.add_xi(9, 9, 8)
-            raw(cmp_xi(9, LCD_W), 'cmp x9, #0x400')
+            raw(cmp_x(9, 14), 'cmp x9, x14')
             blk.b_cond('lo', 'px')
             blk.b('px_done')
     blk.add_xi(5, 5, 1)
     blk.b('row')
     blk.label('paint_done')
     blk.ret()
+    sizes(blk)
     blk.bars_raws = raws
+
+
+def sizes(blk):
+    """Milestone 3: while XPan is active the 16:9 entries of the still-size table hold 65:24 sizes."""
+    blk.label('sync')
+    blk.mov_x64(16, FLAG)
+    blk.ldrb_w(17, 16)
+    blk.mov_x64(16, FLAG + 2)
+    blk.ldr_w(9, 16)
+    blk.mov_w(10, 0)
+    blk.cbz_w(17, 'sync_have')
+    blk.cmp_wi(9, VALUE_169)
+    blk.b_cond('ne', 'sync_have')
+    blk.mov_w(10, 1)
+    blk.label('sync_have')
+    blk.mov_x64(16, ram(va(STATE_AT + 1)))
+    blk.ldrb_w(11, 16)
+    blk.cmp_w(11, 10)
+    blk.b_cond('eq', 'sync_done')
+    blk.strb_w(10, 16)
+    blk.mov_x64(12, va(SIZE_TABLE_AT))
+    blk.mov_w(13, len(SIZES))
+    blk.label('sync_row')
+    blk.ldr_x(14, 12, 0)
+    blk.ldr_w(9, 12, 8)
+    blk.cbz_w(10, 'sync_store')
+    blk.ldr_w(9, 12, 12)
+    blk.label('sync_store')
+    blk.str_w(9, 14, 0)
+    blk.add_xi(12, 12, 16)
+    blk.subs_wi(13, 13, 1)
+    blk.b_cond('ne', 'sync_row')
+    blk.label('sync_done')
+    blk.ret()
+
+
+def size_table():
+    """{RAM address, stock w|h<<16, XPan w|h<<16} per entry, read by the sync routine."""
+    return b''.join(struct.pack('<QII', address, stock[0] | stock[1] << 16, xpan[0] | xpan[1] << 16)
+                    for address, stock, xpan in SIZES)
 
 
 def check_stock(img):
@@ -370,6 +494,9 @@ def check_stock(img):
     # overlay present: str x8,[sp,#0x28] ; bl 402ab038 ; cbnz ; ldr x0,[x29] ; mov w1,w19 ; mov w2,wzr ; bl 402ab1cc
     require(img.u32(off(PRESENT_SITE) - 0x18) == 0xF90017E8 and img.old[off(PRESENT_SITE):off(PRESENT_SITE) + 4] ==
             branch(PRESENT_SITE, F_PRESENT, link=True), 'Unexpected overlay present code')
+    # 402ad194: tst w20,#0xff ; str w27,[x13,#0x2400] ; b.eq (x16 is live across, x17 is not)
+    require(struct.unpack_from('<3I', img.old, off(OSIZE_SITE) - 4) == (0x72001E9F, OSIZE_WORD, 0x54000180),
+            'Unexpected overlay size code')
     # the flag byte is padding: 07000602h ends at A03D482C2 and 07000603h starts at A03D482C4
     entry = lambda lo: struct.unpack_from('<IIQ', img.old, off(0x4400A5C0 + 0x18 * (233 + lo)))
     require(entry(2) == (10, 4, FLAG - 4) and entry(3) == (9, 4, FLAG + 2), 'Unexpected photo-bank DS layout')
@@ -434,12 +561,18 @@ def build_main(data, strings):
             expect=struct.pack('<Q', STOCK_PAGE))
     img.put(off(COPY_SITE), branch(COPY_SITE, blk.labels['copy']),
             'slot copy, 32-bit case: hook for the XPan flag byte', expect=struct.pack('<I', COPY_WORD))
-    require(at <= STATE_AT, 'XPan GUI area overlaps the runtime state')
-    img.put(STATE_AT, bytes(16), 'XPan runtime state: rear-monitor live view running (zero at load)', expect_zero=True)
+    require(at <= SIZE_TABLE_AT and SIZE_TABLE_AT + len(size_table()) <= STATE_AT, 'XPan GUI area overlaps its tables')
+    for address, stock, _ in SIZES:
+        require(img.u32(off(address)) == stock[0] | stock[1] << 16, f'Unexpected stock size at {address:#x}')
+    img.put(SIZE_TABLE_AT, size_table(), 'still-size table entries: 16:9 and 65:24 values', expect_zero=True)
+    img.put(STATE_AT, bytes(UNIT_EVF + 16), 'XPan runtime state: size sync, per-unit live view and geometry (zero at load)',
+            expect_zero=True)
     img.put(off(START_SITE), branch(START_SITE, blk.labels['lv_start']),
-            'rear-monitor direct input start: record live view running', expect=struct.pack('<I', START_WORD))
+            'display direct input start: record live view running', expect=struct.pack('<I', START_WORD))
     img.put(off(STOP_SITE), branch(STOP_SITE, blk.labels['lv_stop']),
-            'rear-monitor direct input stop: record live view stopped', expect=struct.pack('<I', START_WORD))
+            'display direct input stop: record live view stopped', expect=struct.pack('<I', START_WORD))
+    img.put(off(OSIZE_SITE), branch(OSIZE_SITE, blk.labels['osize']),
+            'overlay layer size store: record overlay width and height', expect=struct.pack('<I', OSIZE_WORD))
     img.put(off(PRESENT_SITE), branch(PRESENT_SITE, blk.labels['present'], link=True),
             'overlay bank request: paint 65:24 bars first', expect=branch(PRESENT_SITE, F_PRESENT, link=True))
     listing = blk.listing(Cs(CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN))
@@ -448,6 +581,6 @@ def build_main(data, strings):
     for x, w, t in listing:
         word = int.from_bytes(bytes.fromhex(w), 'little')
         require(word not in raws or t == raws[word], f'Bad raw encoding at {x:#x}: {t}')
-    return img, dict(prototype=True, milestone=2, label_id=label_id, flag=hex(FLAG), item=hex(ITEM_XPAN),
+    return img, dict(prototype=True, milestone=3, label_id=label_id, flag=hex(FLAG), item=hex(ITEM_XPAN),
                      routine=hex(va(CODE_AT)), page=hex(va(page_at)), labels={k: hex(v) for k, v in blk.labels.items()},
                      code=[dict(va=hex(x), word=w, text=t) for x, w, t in listing])
