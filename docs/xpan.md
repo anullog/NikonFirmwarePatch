@@ -21,16 +21,16 @@ XPan 在相机内部按原厂 16:9 影像区域（设定值 4）运行，另加�
 | 4 | 对焦点范围限制在 65:24 画面内（所有自动对焦区域模式及自定义宽区域尺寸） | 模拟器通过（单点对焦框停在 65:24 画面上下边缘）；尚未实机测试 |
 | 4b | XPan 图标：实时取景／EVF 信息显示、影像区域菜单行和 XPan 行、i 菜单图块 | 实时取景和菜单模拟器通过；i 菜单图块待实机测试 |
 | 4c | 按钮加指令拨盘和 i 菜单中可选择 XPan（16:9 之后） | 已构建；模拟器无拨盘，待实机测试 |
-| 5 | NEF 裁切、回放 | 尚未开始 |
+| 5 | NEF／JPEG 的 MakerNote CropArea 记录 65:24 范围（原始数据仍为 16:9）；HDMI 黑边 | 已构建；模拟器无法验证，待实机测试 |
 
 ### 已知限制
 
 - EVF 黑边假定 1280×960 面板上画面居中（第 244–715 行），尚未验证；图像查看尚无黑边。
-- 第 3 阶段只改变 JPEG／HEIF 和预览尺寸，NEF 仍为 16:9（8280×4656）；尚不清楚相机是裁切还是压缩画面。
+- 第 3 阶段只改变 JPEG／HEIF 和预览尺寸；尚不清楚相机是裁切还是压缩画面。
 - 黑边区域内的图标仍会显示。高于 65:24 画面的自定义宽区域对焦框只保留居中的一行，会伸入黑边。
 - XPan 只用于照片模式；视频模式下 16:9 按原厂运行（无黑边，尺寸和对焦范围为原厂值）。
-- HDMI 输出不经过背屏／EVF 的显示单元，尚无黑边。
-- 回放时 XPan 照片的影像区域图标仍为 16:9（文件中不记录 XPan）。
+- HDMI 黑边只在显示拍摄信息、输出为 1920×1080 或 1280×720 时绘制；无信息的 HDMI 输出仍为完整 16:9 画面。
+- NEF 原始数据仍为 16:9（8280×4656）；65:24 范围只记录在 MakerNote CropArea 中，RAW 软件可能忽略。
 - i 菜单的影像区域列表（在该项上按 OK）没有单独的 XPan 行：XPan 生效时 16:9 行显示为 XPan，在列表中选择任何一行都会清除 XPan。要选择 XPan，请在高亮该项时转动指令拨盘，或使用按钮加拨盘、照片拍摄菜单。
 - 其他改变影像区域的方式（按钮切换 FX／DX、遥控）会使 XPan 自动清除（影像区域不是 16:9 时，每帧同步例程清除标记）。
 - 菜单设定保存到存储卡时不包含 XPan 标记。
@@ -62,11 +62,12 @@ python verify.py "/path/to/Z_8_0311.bin" build/xpan/Z_8_0413.bin --features xpan
 
 | 位置 | 改动 |
 |---|---|
-| `402aa36c` / `402aa498` | 背屏（`15484000h`）和 EVF（`15480000h`）直接输入（实时取景）启动／停止时，分别记录运行状态（`408CFF00` 起，经文本段 RAM 别名写入） |
+| `402aa36c` / `402aa498` | 背屏与 EVF 单元（`15484000h`）和 HDMI 单元（`15480000h`）直接输入（实时取景）启动／停止时，分别记录运行状态（`408CFF00` 起，经文本段 RAM 别名写入） |
 | `402ad198` | 每帧写入叠加层尺寸时，按显示单元记录宽高（此处只用 x17，不改变条件标志） |
-| `402cf9d0` | 每帧提交 GUI 叠加层之前：XPan 生效且该单元实时取景运行时，16:9 画面高 = 宽 × 9/16、在面板上居中，65:24 画面高 = 宽 × 24/65（取偶数）、在 16:9 画面中居中；其上下 GUI 留空（透明）的像素改为不透明黑色，图标保留。只处理宽 1024（背屏，第 152–529 行）或 1280（EVF）的叠加层。CPU 写入前后清理缓存行。 |
+| `402cf9d0` | 每帧提交 GUI 叠加层之前：XPan 生效且该单元实时取景运行时，16:9 画面高 = 宽 × 9/16、在面板上居中，65:24 画面高 = 宽 × 24/65（取偶数）、在 16:9 画面中居中；其上下 GUI 留空（透明）的像素改为不透明黑色，图标保留。记录的叠加层尺寸是上一帧的，因此只有当它与当前输出（`A02810470`：0 背屏 1024×682，第 152–529 行；1 EVF 1280×960）一致时才绘制。CPU 写入前后清理缓存行。 |
+| `402c3a58` | HDMI 提交（单元 1C7h）：先运行同步例程；XPan 生效、HDMI 实时取景运行、第 2 层为 YYUV＋alpha、记录尺寸为 1920×1080 或 1280×720，且该表面的颜色和 alpha 平面地址与记录尺寸一致时，按同样规则绘制黑边。 |
 
-第 3 阶段（文件尺寸，实验性）：同一提交点调用的同步例程在 XPan 生效时，把 RAM 中静态图像尺寸表（`A02A946A4` 起，经 `41061928` 读取）的 16:9 项改为 65:24 值，XPan 关闭时恢复：JPEG L/M/S、三项全尺寸渲染、1920×1080／640×360／320×180／160×90 预览改为 1920×712／640×236／320×118／160×60。原始数据读出（8280×4656）不变。
+第 3 阶段（文件尺寸，实验性）：同一提交点调用的同步例程（HDMI 提交点 `402c3a58` 也调用）在 XPan 生效时，把 RAM 中静态图像尺寸表（`A02A946A4` 起，经 `41061928` 读取）的 16:9 项改为 65:24 值，XPan 关闭时恢复：JPEG L/M/S、三项全尺寸渲染、1920×1080／640×360／320×180／160×90 预览改为 1920×712／640×236／320×118／160×60。原始数据读出（8280×4656）不变。
 
 第 4 阶段（对焦点范围）：同一同步例程还替换 RAM 中自动对焦网格描述符（`40F3493C` 每次调用时复制；各自动对焦区域模式表 `A02A5CE38`／`A02A5D714`，自定义宽区域尺寸表 `A02A4C470`／`A02A54954`）的 16:9 项：保持对焦框大小、步长和边距，行数减为 65:24 画面（传感器第 1228–4276 行）内可容纳的最多行数（奇偶性不变），并以原中间行为中心。XPan 生效的条件为：有 XPan 标记、影像区域为 16:9，且照片／视频选择器位于照片；黑边使用同一判断结果。
 
@@ -95,16 +96,16 @@ Inside the camera, XPan runs as the stock 16:9 image area (value 4) plus an XPan
 | 4 | Focus points kept inside the 65:24 frame (every AF-area mode and custom wide-area size) | Emulator pass (the focus box stops at the 65:24 frame's top and bottom); not camera-tested |
 | 4b | XPan icon: live view/EVF info display, Image area menu rows and the XPan row, i-menu tile | Emulator pass for live view and menus; i-menu tile needs a camera test |
 | 4c | XPan in the button-and-command-dial choice and the i menu (after 16:9) | Built; the emulator has no dials, needs a camera test |
-| 5 | NEF crop, playback | Not started |
+| 5 | NEF/JPEG MakerNote CropArea records the 65:24 window (raw data stays 16:9); HDMI bars | Built; the emulator can't check either, needs a camera test |
 
 ### Known limits
 
 - EVF bars assume the picture is centred on the 1280×960 panel (rows 244–715), not yet confirmed; image review doesn't have bars.
-- Milestone 3 changes only the JPEG/HEIF and preview sizes; NEFs stay 16:9 (8280×4656). Whether the camera crops or squeezes the picture is not yet known.
+- Milestone 3 changes only the JPEG/HEIF and preview sizes. Whether the camera crops or squeezes the picture is not yet known.
 - Icons inside the bar area still show. Custom wide-area AF boxes taller than the 65:24 frame keep one centred row and reach into the bars.
 - XPan applies to photo mode only; in video mode 16:9 runs stock (no bars, stock sizes and focus range).
-- HDMI output doesn't go through the rear-monitor/EVF display units and has no bars yet.
-- In playback, XPan pictures show the 16:9 image-area icon (files don't record XPan).
+- HDMI bars are painted only with the shooting info shown and 1920×1080 or 1280×720 output; a clean HDMI feed shows the full 16:9 picture.
+- NEF raw data stays 16:9 (8280×4656); the 65:24 window is only recorded in the MakerNote CropArea tag, which raw converters may ignore.
 - The i-menu Image area list (OK on the item) has no XPan row of its own. While XPan is current, the 16:9 row shows XPan, and picking any row in the list clears XPan. To pick XPan, turn the command dial with the item highlighted, or use the button and dial or the photo shooting menu.
 - Other ways of changing the image area (the FX/DX button toggle, remote control) clear XPan: whenever the image area isn't 16:9, the per-frame sync routine clears the flag.
 - Saving menu settings to a card doesn't include the XPan flag.
@@ -136,11 +137,12 @@ Milestone 2 (bars):
 
 | Site | Change |
 |---|---|
-| `402aa36c` / `402aa498` | Direct input (live view) start/stop of the rear monitor (`15484000h`) and the EVF (`15480000h`): record per unit whether live view is running (from `408CFF00`, written through the text section's RAM alias) |
+| `402aa36c` / `402aa498` | Direct input (live view) start/stop of the rear-monitor/EVF unit (`15484000h`) and the HDMI unit (`15480000h`): record per unit whether live view is running (from `408CFF00`, written through the text section's RAM alias) |
 | `402ad198` | Each frame's overlay size store: record width and height per unit (uses only x17 and leaves the flags alone) |
-| `402cf9d0` | Before each GUI overlay frame is presented, with XPan active and live view running on that unit: the 16:9 picture is width × 9/16, centred on the panel; the 65:24 window is width × 24/65 (even), centred in it. Every pixel above and below that the GUI left transparent becomes opaque black, and icons stay. Only overlays 1024 wide (rear monitor, rows 152–529) or 1280 wide (EVF) are painted. Cache lines are cleaned around the CPU writes. |
+| `402cf9d0` | Before each GUI overlay frame is presented, with XPan active and live view running on that unit: the 16:9 picture is width × 9/16, centred on the panel; the 65:24 window is width × 24/65 (even), centred in it. Every pixel above and below that the GUI left transparent becomes opaque black, and icons stay. The recorded overlay size is the previous frame's, so a frame is painted only when it matches the output shown now (`A02810470`: 0 rear monitor 1024×682, rows 152–529; 1 EVF 1280×960). Cache lines are cleaned around the CPU writes. |
+| `402c3a58` | HDMI present (unit 1C7h): runs the sync routine first. With XPan active, HDMI live view running, layer 2 a YYUV+alpha surface, a recorded size of 1920×1080 or 1280×720, and the surface's own colour and alpha plane addresses matching that size, the bars are painted by the same rule. |
 
-Milestone 3 (file sizes, experimental): a sync routine called from the same present hook rewrites the 16:9 entries of the still-size table in RAM (from `A02A946A4`, read through `41061928`) to 65:24 values while XPan is active, and restores them when it is off: JPEG L/M/S, the three full-size rendering entries, and the 1920×1080/640×360/320×180/160×90 previews become 1920×712/640×236/320×118/160×60. The raw readout (8280×4656) is unchanged.
+Milestone 3 (file sizes, experimental): a sync routine called from the same present hook (and from the HDMI present at `402c3a58`) rewrites the 16:9 entries of the still-size table in RAM (from `A02A946A4`, read through `41061928`) to 65:24 values while XPan is active, and restores them when it is off: JPEG L/M/S, the three full-size rendering entries, and the 1920×1080/640×360/320×180/160×90 previews become 1920×712/640×236/320×118/160×60. The raw readout (8280×4656) is unchanged.
 
 Milestone 4 (focus point range): the same sync routine also swaps the 16:9 entries of the AF grid descriptors in RAM. `40F3493C` copies one on every call, from the AF-area mode tables `A02A5CE38`/`A02A5D714` and the custom wide-area size tables `A02A4C470`/`A02A54954`. Box size, step and edge margins stay the same. The row count drops to the most rows that fit the 65:24 frame (sensor rows 1228–4276), keeping its parity, centred on the stock middle row. XPan is active when the flag is set, the image area is 16:9 and the photo/video selector is on photo; the bars use the same result.
 

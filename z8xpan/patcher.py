@@ -24,12 +24,14 @@ rotating buffers, presented by 402CF85C (colour address, then bank request 402AB
             left transparent in rows 0..151 and 530..681 becomes opaque black; icons stay. The 65:24 window
             is rows 152..529, the centre 378 rows of the 576-row 16:9 picture. Cache lines are cleaned and
             invalidated around the CPU writes.
-The same present hook paints the EVF (unit 15480000h, 1280-wide overlay). Milestones 3-4: a sync routine on
+Unit 15484000h also drives the EVF (1280x960 overlay; A02810470 says which output is shown). HDMI is unit
+15480000h with its own present (402C3A58), hooked the same way. Milestones 3-4: a sync routine on
 that hook swaps the 16:9 still sizes and AF grid descriptors to 65:24 values while XPan is active (flag, 16:9,
 photo mode), see sizes() and af_swaps(). Icon: image ids 1862h/1863h (XPan) come from new records through a
 hook in the image lookup; the live view and Image area row pickers choose them with the flag set, see icons().
 Fn + command dial and the i menu offer XPan after 16:9, see dial() and imenu().
-HDMI and playback are untouched.
+NEF/JPEG: the MakerNote CropArea writer records the 65:24 window while XPan is active, see nef(); raw data
+stays the 16:9 readout. Playback is untouched.
 Used by features.compose; offline only.
 """
 import hashlib
@@ -68,15 +70,23 @@ PINNED = {0x405DBE0C: (0x98, '6e08bf0521ed62638837f6f84730b9880fe8af8c3bb851ea1b
 STOCK_LABEL = 0x582                                          # "16:9 (36×20)" and its 35 translations
 TABLE_DIR, BLOB_DIR = 0x311C5A0, 0x387AF58
 # milestone 2: opaque bars painted into a display's overlay just before each frame is presented
-LCD_BASE, EVF_BASE = 0x15484000, 0x15480000                  # display units (identity MMIO): rear monitor, EVF
+LCD_BASE, HDMI_BASE = 0x15484000, 0x15480000                 # display units 1C8h (rear monitor + EVF), 1C7h (HDMI)
 START_SITE, START_NEXT = 0x402AA36C, 0x402AA370              # str w9,[x8,#0x100]: direct input start
 STOP_SITE, STOP_NEXT = 0x402AA498, 0x402AA49C                # str w9,[x8,#0x100]: direct input stop
 START_WORD = 0xB9010109
 PRESENT_SITE, F_PRESENT = 0x402CF9D0, 0x402AB1CC             # bl: bank request after the overlay address
 OSIZE_SITE, OSIZE_NEXT, OSIZE_WORD = 0x402AD198, 0x402AD19C, 0xB92401BB   # str w27,[x13,#0x2400]: overlay size
 STATE_AT = 0x76FF00                                          # zero-initialized runtime state, see bars()
-UNIT_LCD, UNIT_EVF = 0x10, 0x20                              # per unit: +0 running, +8 overlay w, +10 overlay h
-OVERLAY_WIDTHS = (1024, 1280)                                # rear monitor 1024x682, EVF 1280x960
+UNIT_LCD, UNIT_HDMI = 0x10, 0x20                             # per unit: +0 running, +8 overlay w, +10 overlay h
+DISPLAY_SEL, PANELS = 0xA02810470, ((1024, 682), (1280, 960)) # unit 1C8h output shown: 0 rear monitor, 1 EVF
+# HDMI present (402C33FC): bl 402AB1CC with x0 = unit 1C7h, w1 = layer, colour CPU address at [sp+0xA8]; the
+# surface record x20 + x26 * x21 holds +18h colour and +20h alpha plane, [x20] the pixel type (14h: YYUV + alpha)
+HDMI_SITE, HDMI_SIZES, SURFACE_YYUVA = 0x402C3A58, ((1920, 1080), (1280, 720)), 0x14
+# NEF/JPEG MakerNote 0045h CropArea (left, top, width, height), written by 406E9B90 from info+280h; info+26Ch is
+# the image area. Raw data stays the 16:9 readout; XPan records the 65:24 window inside it.
+CROP_SITE, CROP_NEXT, CROP_WORD = 0x406E9BFC, 0x406E9C00, 0x79000EC8   # strh w8,[x22,#6]: height (w9 width)
+CROP_169, CROP_XPAN_H = (8256, 4640), 3048
+LDUR_AREA = 0xB85EC2AA                                        # ldur w10,[x21,#-0x14]: info+26Ch
 TEXT_SECTION, TEXT_ALIAS = 0x40200000, 0xA0F800000           # writable RAM alias of the copied text section
 RAM_LO, RAM_HI = 0xA00000000, 0xB00000000                    # 402AB038 converts to the bus address itself
 BLACK_Y, BLACK_PAIR = 0x00, 0x8080000080800000               # Y0 Y1 U V; the overlay conversion is full range
@@ -301,6 +311,7 @@ def code(count, label_id):
     blk.label('copy_done')
     blk.b(COPY_NEXT)
     icons(blk)
+    nef(blk)
     dial(blk, label_id)
     imenu(blk, label_id)
     bars(blk, count)
@@ -308,10 +319,12 @@ def code(count, label_id):
 
 
 def bars(blk, count):
-    """Milestones 2 and 2b: 65:24 bars in live view on the rear monitor and the EVF.
+    """Milestones 2 and 2b: 65:24 bars in live view on the rear monitor, the EVF and HDMI.
 
-    Runtime state at STATE_AT (+1: size-table sync, see sizes()); per display unit at UNIT_LCD / UNIT_EVF:
+    Runtime state at STATE_AT (+1: size-table sync, see sizes()); per display unit at UNIT_LCD / UNIT_HDMI:
     +0 live view running, +8/+10 overlay width and height, each recorded where the firmware programs them.
+    The recorded size is the previous frame's, so a frame is painted only when it matches the buffer being
+    presented: on unit 1C8h the size of the output A02810470 selects, on HDMI the surface's own plane addresses.
     The 16:9 picture is centred on the panel (rear monitor: rows 53..628 of 682).
     """
     raws = {}
@@ -320,26 +333,26 @@ def bars(blk, count):
         raws[word] = text
         blk.raw(word)
 
-    def unit_state(base_reg, scratch, lcd_label, evf_label, none_label):
-        """Branch to lcd_label or evf_label by display unit; flags are left untouched."""
+    def unit_state(base_reg, scratch, lcd_label, hdmi_label, none_label):
+        """Branch to lcd_label or hdmi_label by display unit; flags are left untouched."""
         blk.mov_x64(scratch, LCD_BASE)
         raw(sub_x(scratch, base_reg, scratch), f'sub x{scratch}, x{base_reg}, x{scratch}')
         blk.cbz_x(scratch, lcd_label)
-        blk.mov_x64(scratch, EVF_BASE)
+        blk.mov_x64(scratch, HDMI_BASE)
         raw(sub_x(scratch, base_reg, scratch), f'sub x{scratch}, x{base_reg}, x{scratch}')
-        blk.cbz_x(scratch, evf_label)
+        blk.cbz_x(scratch, hdmi_label)
         blk.b(none_label)
 
     # direct input (live view) started / stopped, per unit
     for name, value, nxt in (('lv_start', 1, START_NEXT), ('lv_stop', 0, STOP_NEXT)):
         blk.label(name)
         raw(START_WORD, 'str w9, [x8, #0x100]')
-        unit_state(8, 16, name + '_lcd', name + '_evf', name + '_done')
+        unit_state(8, 16, name + '_lcd', name + '_hdmi', name + '_done')
         blk.label(name + '_lcd')
         blk.mov_x64(16, ram(va(STATE_AT + UNIT_LCD)))
         blk.b(name + '_set')
-        blk.label(name + '_evf')
-        blk.mov_x64(16, ram(va(STATE_AT + UNIT_EVF)))
+        blk.label(name + '_hdmi')
+        blk.mov_x64(16, ram(va(STATE_AT + UNIT_HDMI)))
         blk.label(name + '_set')
         blk.mov_w(17, value)
         blk.strb_w(17, 16)
@@ -350,15 +363,15 @@ def bars(blk, count):
     raw(OSIZE_WORD, 'str w27, [x13, #0x2400]')
     blk.mov_x64(17, LCD_BASE)
     raw(sub_x(17, 13, 17), 'sub x17, x13, x17')
-    cbnz_x(blk, 17, 'osize_evf')
+    cbnz_x(blk, 17, 'osize_hdmi')
     blk.mov_x64(17, ram(va(STATE_AT + UNIT_LCD + 8)))
     blk.str_w(27, 17)
     blk.b('osize_done')
-    blk.label('osize_evf')
-    blk.mov_x64(17, EVF_BASE)
+    blk.label('osize_hdmi')
+    blk.mov_x64(17, HDMI_BASE)
     raw(sub_x(17, 13, 17), 'sub x17, x13, x17')
     cbnz_x(blk, 17, 'osize_done')
-    blk.mov_x64(17, ram(va(STATE_AT + UNIT_EVF + 8)))
+    blk.mov_x64(17, ram(va(STATE_AT + UNIT_HDMI + 8)))
     blk.str_w(27, 17)
     blk.label('osize_done')
     blk.b(OSIZE_NEXT)
@@ -374,22 +387,31 @@ def bars(blk, count):
     blk.ldrb_w(17, 16)
     blk.cbz_w(17, 'flip')                       # XPan not active (see sync): no bars
     blk.ldr_x(9, 0, 8)
-    unit_state(9, 16, 'present_lcd', 'present_evf', 'flip')
-    blk.label('present_lcd')
+    blk.mov_x64(16, LCD_BASE)
+    raw(cmp_x(9, 16), 'cmp x9, x16')
+    blk.b_cond('ne', 'flip')                    # only unit 1C8h presents here
     blk.mov_x64(11, ram(va(STATE_AT + UNIT_LCD)))
-    blk.b('present_unit')
-    blk.label('present_evf')
-    blk.mov_x64(11, ram(va(STATE_AT + UNIT_EVF)))
-    blk.label('present_unit')
     blk.ldrb_w(17, 11)
     blk.cbz_w(17, 'flip')                       # live view not running on this unit
-    blk.ldrh_w(14, 11, 8)                       # overlay (panel) width
-    blk.ldrh_w(13, 11, 10)                      # overlay height
-    blk.cmp_wi(14, OVERLAY_WIDTHS[0])
-    blk.b_cond('eq', 'width_ok')
-    blk.cmp_wi(14, OVERLAY_WIDTHS[1])
-    blk.b_cond('ne', 'flip')
-    blk.label('width_ok')
+    blk.ldrh_w(14, 11, 8)                       # overlay width and height as last programmed
+    blk.ldrh_w(13, 11, 10)
+    blk.mov_x64(16, DISPLAY_SEL)
+    blk.ldr_w(16, 16)
+    for n, (w, h) in enumerate(PANELS):         # must be the size of the output shown now
+        blk.cmp_wi(16, n)
+        blk.b_cond('ne', f'panel{n}_next')
+        blk.cmp_wi(14, w)
+        blk.b_cond('ne', 'flip')
+        blk.cmp_wi(13, h)
+        blk.b_cond('ne', 'flip')
+        blk.b('panel_ok')
+        blk.label(f'panel{n}_next')
+    blk.b('flip')
+    blk.label('panel_ok')
+    blk.ldr_x(4, 31, 0x28)                      # caller's overlay record: colour CPU address (bus = +400000000h)
+    raw(umull(12, 14, 13), 'umull x12, w14, w13')
+    blk.add_x(3, 4, 12, lsl=1)                  # alpha plane follows the YYUV plane
+    blk.label('frame')                          # paint w14 x w13 frame: x4 colour, x3 alpha, then present
     raw(add_w_lsl(8, 14, 14, 3), 'add w8, w14, w14, lsl #3')
     raw(lsr_wi(8, 8, 4), 'lsr w8, w8, #4')      # 16:9 picture height = width * 9 / 16, centred on the panel
     blk.cmp_w(8, 13)
@@ -406,15 +428,12 @@ def bars(blk, count):
     raw(lsr_wi(16, 16, 1), 'lsr w16, w16, #1')
     blk.add_w(16, 16, 9)                        # first 65:24 row
     blk.add_w(17, 16, 10)                       # first row below the 65:24 window
-    blk.ldr_x(4, 31, 0x28)                      # caller's overlay record: colour CPU address (bus = +400000000h)
     blk.mov_x64(12, RAM_LO)
     raw(cmp_x(4, 12), 'cmp x4, x12')
     blk.b_cond('lo', 'flip')
     blk.mov_x64(12, RAM_HI - 0x400000)
     raw(cmp_x(4, 12), 'cmp x4, x12')
     blk.b_cond('hs', 'flip')
-    raw(umull(12, 14, 13), 'umull x12, w14, w13')
-    blk.add_x(3, 4, 12, lsl=1)                  # alpha plane follows the YYUV plane
     blk.mov_x(15, 30)
     blk.stp_pre(17, 13, -16)
     blk.mov_w(5, 0)
@@ -426,6 +445,48 @@ def bars(blk, count):
     blk.mov_x(30, 15)
     blk.label('flip')
     blk.b(F_PRESENT)
+    # HDMI bank request (402C3A58): same as above for unit 1C7h, layer 2, sizes in HDMI_SIZES only, and only
+    # when the surface's own colour and alpha planes match the recorded size
+    blk.label('hdmi_present')
+    blk.mov_x(15, 30)
+    blk.bl('sync')
+    blk.mov_x(30, 15)
+    blk.cmp_wi(1, 2)
+    blk.b_cond('ne', 'flip')
+    blk.mov_x64(16, ram(va(STATE_AT + 1)))
+    blk.ldrb_w(17, 16)
+    blk.cbz_w(17, 'flip')
+    blk.ldr_x(9, 0, 8)
+    blk.mov_x64(16, HDMI_BASE)
+    raw(cmp_x(9, 16), 'cmp x9, x16')
+    blk.b_cond('ne', 'flip')
+    blk.mov_x64(11, ram(va(STATE_AT + UNIT_HDMI)))
+    blk.ldrb_w(17, 11)
+    blk.cbz_w(17, 'flip')                       # HDMI live view not running
+    blk.ldr_w(9, 20)
+    blk.cmp_wi(9, SURFACE_YYUVA)
+    blk.b_cond('ne', 'flip')
+    blk.ldrh_w(14, 11, 8)
+    blk.ldrh_w(13, 11, 10)
+    for n, (w, h) in enumerate(HDMI_SIZES):
+        blk.cmp_wi(14, w)
+        blk.b_cond('ne', f'hdmi{n}_next')
+        blk.cmp_wi(13, h)
+        blk.b_cond('eq', 'hdmi_size_ok')
+        blk.label(f'hdmi{n}_next')
+    blk.b('flip')
+    blk.label('hdmi_size_ok')
+    blk.madd_x(9, 26, 21, 20)                   # surface record, as 402C3A1C computes it
+    blk.ldr_x(4, 31, 0xA8)                      # colour CPU address handed to 402AB038
+    blk.ldr_x(12, 9, 0x18)
+    raw(cmp_x(4, 12), 'cmp x4, x12')
+    blk.b_cond('ne', 'flip')                    # window offset: not a full-surface present
+    raw(umull(12, 14, 13), 'umull x12, w14, w13')
+    blk.add_x(3, 4, 12, lsl=1)
+    blk.ldr_x(12, 9, 0x20)
+    raw(cmp_x(3, 12), 'cmp x3, x12')
+    blk.b_cond('ne', 'flip')                    # plane layout differs from the recorded size
+    blk.b('frame')
     # paint rows [w5, w6) of width x14: x3 alpha plane, x4 YYUV plane; transparent -> opaque black, icons kept
     blk.label('paint')
     blk.label('row')
@@ -810,6 +871,32 @@ def imenu(blk, label_id):
     blk.b(IMENU_POPUP_NEXT)
 
 
+def nef(blk):
+    """CropArea of files written while XPan is active: the 65:24 window centred in the 16:9 one."""
+    blk.label('croparea')                       # 406E9BFC: x22 = (left, top, width w9, height w8) u16s
+    blk.raw(CROP_WORD)
+    blk.mov_x64(16, ram(va(STATE_AT + 1)))
+    blk.ldrb_w(17, 16)
+    blk.cbz_w(17, 'croparea_done')
+    blk.raw(LDUR_AREA)
+    blk.cmp_wi(10, VALUE_169)
+    blk.b_cond('ne', 'croparea_done')
+    blk.mov_w(16, CROP_169[0])
+    blk.cmp_w(9, 16)
+    blk.b_cond('ne', 'croparea_done')
+    blk.mov_w(16, CROP_169[1])
+    blk.cmp_w(8, 16)
+    blk.b_cond('ne', 'croparea_done')
+    blk.ldrh_w(16, 22, 2)
+    blk.mov_w(17, (CROP_169[1] - CROP_XPAN_H) // 2)
+    blk.add_w(16, 16, 17)
+    blk.strh_w(16, 22, 2)
+    blk.mov_w(16, CROP_XPAN_H)
+    blk.strh_w(16, 22, 6)
+    blk.label('croparea_done')
+    blk.b(CROP_NEXT)
+
+
 def icons(blk):
     """XPan icon: image ids past the stock table come from ICON_AT; the 16:9 icon becomes XPan with the flag set."""
     blk.label('img_lookup')                     # 4032DCA0: w8 = image id, x10 = 24, x9 -> table base
@@ -934,7 +1021,7 @@ def build_main(data, strings):
     for address, stock, _ in rows_swap:
         require(img.u32(off(address)) == stock, f'Unexpected stock table word at {address:#x}')
     img.put(SWAP_TABLE_AT, swap_table(rows_swap), 'still-size and AF-grid words: 16:9 and 65:24 values', expect_zero=True)
-    img.put(STATE_AT, bytes(UNIT_EVF + 16), 'XPan runtime state: size sync, per-unit live view and geometry (zero at load)',
+    img.put(STATE_AT, bytes(UNIT_HDMI + 16), 'XPan runtime state: size sync, per-unit live view and geometry (zero at load)',
             expect_zero=True)
     img.put(off(START_SITE), branch(START_SITE, blk.labels['lv_start']),
             'display direct input start: record live view running', expect=struct.pack('<I', START_WORD))
@@ -944,6 +1031,10 @@ def build_main(data, strings):
             'overlay layer size store: record overlay width and height', expect=struct.pack('<I', OSIZE_WORD))
     img.put(off(PRESENT_SITE), branch(PRESENT_SITE, blk.labels['present'], link=True),
             'overlay bank request: paint 65:24 bars first', expect=branch(PRESENT_SITE, F_PRESENT, link=True))
+    img.put(off(CROP_SITE), branch(CROP_SITE, blk.labels['croparea']),
+            'MakerNote CropArea: 65:24 window while XPan is active', expect=struct.pack('<I', CROP_WORD))
+    img.put(off(HDMI_SITE), branch(HDMI_SITE, blk.labels['hdmi_present'], link=True),
+            'HDMI overlay bank request: sync, then 65:24 bars', expect=branch(HDMI_SITE, F_PRESENT, link=True))
     require(struct.unpack_from('<IIQ', img.old, off(IMAGE_TABLE + 24 * IMAGE_COUNT)) != (IMAGE_FLAGS, 0, 0)
             and img.u32(off(IMAGE_TABLE + 24 * (IMAGE_COUNT - 1))) == IMAGE_FLAGS, 'Unexpected image table end')
     pngs = [xpan_icon(img, STOCK_LV, 2), xpan_icon(img, STOCK_MENU, 4)]
@@ -993,7 +1084,7 @@ def build_main(data, strings):
     raws = {0x12000002: 'and w2, w0, #1', 0x385FE109: 'ldurb w9, [x8, #-2]', 0x381FE149: 'sturb w9, [x10, #-2]',
             COPY_WORD: 'ldp x10, x8, [sp]', LOOKUP_WORD: 'ldr x9, [x9]', LV_ICON_WORD: 'mov w0, #0x25',
             DIAL_FLAGS_WORD: 'ldp x19, x30, [sp, #0xc0]', DIAL_CUR_WORD: 'ldr w24, [x25]', DIAL_SET_WORD: 'ldr w9, [x8]',
-            FN_POPUP_WORD: 'mov w14, #0x582', IMENU_POPUP_WORD: 'strh w12, [x11, x9, lsl #1]', **blk.bars_raws}
+            FN_POPUP_WORD: 'mov w14, #0x582', CROP_WORD: 'strh w8, [x22, #6]', LDUR_AREA: 'ldur w10, [x21, #-0x14]', IMENU_POPUP_WORD: 'strh w12, [x11, x9, lsl #1]', **blk.bars_raws}
     for x, w, t in listing:
         word = int.from_bytes(bytes.fromhex(w), 'little')
         require(word not in raws or t == raws[word], f'Bad raw encoding at {x:#x}: {t}')
