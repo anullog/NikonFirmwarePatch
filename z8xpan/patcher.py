@@ -1,4 +1,4 @@
-"""XPan image area (prototype, milestones 1-4): a sixth "Choose image area" row, XPan (36x13), 65:24 bars,
+"""XPan image area (prototype, milestones 1-5): a sixth "Choose image area" row, XPan (36x13), 65:24 bars,
 65:24 still sizes and AF grids, and an XPan icon.
 
 XPan runs as the stock 16:9 image area (DS 07000603h = 4) plus a flag, so sensor readout, AF and every
@@ -45,7 +45,7 @@ from z8prores.menu import Image
 from z8prores.package import require
 
 BASE, DATA_OFF, DATA_VA = 0x40160000, 0x4B13000, 0xA02808000
-CODE_AT, GUI_AT, GUI_END = 0x766000, 0x767000, 0x770000      # free text gap below the shared strings
+CODE_AT, GUI_AT, GUI_END = 0x766000, 0x767800, 0x770000      # free text gap below the shared strings
 STATE = 0x4C00C80                                            # GUI state 2Ah record (data image)
 STOCK_CALLBACKS, STOCK_PAGE = 0xA028E6E40, 0xA028CC9D0
 CALLBACKS = (0x405DBE0C, 0x405DBEA4, 0x403B2210, 0x405DBCD0, 0)
@@ -58,7 +58,7 @@ OK_EVENTS, END_EVENT = (0x286, 0x28B, 0x2AE), 955
 ITEM_XPAN = 0x35BB                                           # unused item id (35B5..35BA: ProRes, N-RAW)
 ITEM_ID, VALUE_169 = 0x07000603, 4
 FLAG = 0xA03D482C2
-COPY_SITE, COPY_NEXT, COPY_WORD = 0x410162C4, 0x410162C8, 0xA94023EA   # ldp x10,x8,[sp]
+COPY_SITE, COPY_NEXT, COPY_WORD = 0x410162C4, 0x410162D0, 0xA94023EA   # ldp x10,x8,[sp]; then ldr/str w9
 F_GET, F_SET = 0x403EC398, 0x403EC39C
 F_ROW, F_ROW_STATE, F_ENTRY_GUARD = 0x403AF870, 0x403B1ED0, 0x403AE0F8
 F_SET_CURSOR, F_SET_MARK = 0x403B0048, 0x403B00B8
@@ -82,6 +82,13 @@ DISPLAY_SEL, PANELS = 0xA02810470, ((1024, 682), (1280, 960)) # unit 1C8h output
 # HDMI present (402C33FC): bl 402AB1CC with x0 = unit 1C7h, w1 = layer, colour CPU address at [sp+0xA8]; the
 # surface record x20 + x26 * x21 holds +18h colour and +20h alpha plane, [x20] the pixel type (14h: YYUV + alpha)
 HDMI_SITE, HDMI_SIZES, SURFACE_YYUVA = 0x402C3A58, ((1920, 1080), (1280, 720)), 0x14
+SURFACE_RECORD, HEIGHT_MASK = 0x48, 0x120035AD                # surface records of 48h bytes; and w13,w13,#0x3fff
+EFFECTIVE_AREA = 0xA032CFC50 + 0x168                          # live-view image-area icon index shown (4 = 16:9)
+LOCK, DIRTY, DIRTY_FRAMES, MARK = STATE_AT + 4, STATE_AT + 5, 12, 0xFE   # painted pixels: black, alpha FEh
+LDAXRB, STXRB, STLRB, CLREX = 0x085FFD07, 0x08067D07, 0x089FFD1F, 0xD5033F5F  # sync lock at x8 (w7, w6)
+# still pipeline: u32 count of jobs in flight (+1 at job creation 40F74E30, -1 when the job's info is freed
+# 40F6FB9C). Later stages re-read the size table by index, so a table switch waits until it is 0.
+PIPE_BUSY, DEFER, DEFER_FRAMES = 0xA03BC5FA0, STATE_AT + 6, 1800
 # NEF/JPEG MakerNote 0045h CropArea (left, top, width, height), written by 406E9B90 from info+280h; info+26Ch is
 # the image area. Raw data stays the 16:9 readout; XPan records the 65:24 window inside it.
 CROP_SITE, CROP_NEXT, CROP_WORD = 0x406E9BFC, 0x406E9C00, 0x79000EC8   # strh w8,[x22,#6]: height (w9 width)
@@ -95,9 +102,9 @@ BLACK_Y, BLACK_PAIR = 0x00, 0x8080000080800000               # Y0 Y1 U V; the ov
 SIZES = ((0xA02A94744, (8256, 4640), (8256, 3048)), (0xA02A94748, (6192, 3480), (6192, 2288)),
          (0xA02A9474C, (4128, 2320), (4128, 1528)), (0xA02A94970, (8256, 4640), (8256, 3048)),
          (0xA02A94974, (8256, 4640), (8256, 3048)), (0xA02A94978, (8256, 4640), (8256, 3048)),
-         (0xA02A947E0, (640, 360), (640, 236)), (0xA02A947F4, (320, 180), (320, 118)),
+         (0xA02A947E0, (640, 360), (640, 240)), (0xA02A947F4, (320, 180), (320, 120)),
          (0xA02A94808, (1920, 1080), (1920, 712)), (0xA02A9481C, (160, 90), (160, 60)))
-SWAP_TABLE_AT = 0x768000                                     # read-only {address, stock, XPan} words for sync
+SWAP_TABLE_AT = 0x769000                                     # read-only {address, stock, XPan} words for sync
 SELECTOR = 0xA03D7C94C                                       # DS 0218Ch photo/video selector (1 = video)
 # milestone 4: AF grid descriptors in RAM data, read only by 40F3493C (memcpy of 0x1C bytes per call): tables of
 # 0xFC-byte rows (9 image areas each), one row per AF-area mode or per custom wide-area size. Descriptor u16s:
@@ -109,9 +116,10 @@ BAND_169, BAND_XPAN = (432, 5072), (1228, 4276)              # sensor rows of th
 # for ids past the stock table (6242 records at 431D96D0; record = table + 24 * id: u32 flags, u32 size, u64 0,
 # u64 PNG). Live view/EVF and the i-menu tile use the 36x32 image, menus the 36x36 one.
 IMAGE_TABLE, IMAGE_COUNT, IMAGE_FLAGS = 0x431D96D0, 0x1862, 0x100
+IMAGE_BASE_SITE = 0x403EE56C                                  # boot: mov x0,#table; bl 4032DC34 (base -> A02F2AB80)
 ICON_LV, ICON_MENU = IMAGE_COUNT, IMAGE_COUNT + 1             # new ids; stock 16:9 counterparts 84Bh, 1173h
 STOCK_LV, STOCK_MENU = 0x84B, 0x1173
-ICON_AT = 0x76B000                                            # two image records, then their PNGs
+ICON_AT = 0x76C000                                            # two image records, then their PNGs
 LOOKUP_SITE, LOOKUP_NEXT, LOOKUP_WORD = 0x4032DCA0, 0x4032DCA4, 0xF9400129     # ldr x9,[x9]: table base, w8 = id
 LV_ICON_SITE, LV_ICON_NEXT, LV_ICON_WORD = 0x4041A9E4, 0x4041A9E8, 0x528004A0  # mov w0,#0x25; w3 = image-area icon
 MENU_ICON_SITES = ((0x405DBDA0, 0x405DBDAC, 21, 0x52822E75),  # Image area row summary icons (widget 29B7h):
@@ -122,7 +130,7 @@ IMENU_LABEL = 0xA028760A8                                     # i-menu image-are
 # photo and video, returned by 40D4E82C. XPan becomes an eighth row after 16:9 in a writable copy; picking it writes
 # 16:9 and leaves a pending byte that sync turns into the flag once the image area reads 16:9.
 DIAL_TABLE, DIAL_VALUES, DIAL_XPAN = 0xA02823428, (0, 3, 1, 2, 8, 4, 5), 0x40
-DIAL_ROW_169, DIAL_ROW_XPAN, DIAL_TABLE_AT = 5, 6, 0x76C000
+DIAL_ROW_169, DIAL_ROW_XPAN, DIAL_TABLE_AT = 5, 6, 0x76D000
 DIAL_COUNT_SITE, DIAL_COUNT_WORD, DIAL_ADDR_SITE = 0x40D4E830, 0x32000BE8, 0x40D4E838   # mov w8,#7; mov x0,#table
 DIAL_CURSOR_PHOTO = 0xA0321F100                               # current row (photo; video uses A0321F104)
 DIAL_FLAGS_SITE, DIAL_FLAGS_NEXT, DIAL_FLAGS_WORD = 0x40D3A7BC, 0x40D3A7C0, 0xA94C7BF3  # ldp x19,x30 after 40D4702C
@@ -133,6 +141,7 @@ PENDING, SAVED, PENDING_FRAMES = STATE_AT + 2, STATE_AT + 3, 200
 # i menu, image-area item descriptor 43A1D408: +10 dial step, +20 list open, +30 rollback. XPan is the dial step
 # after 16:9; the list keeps four rows and its 16:9 row shows XPan while XPan is current (sync swaps its icon, label).
 IMENU_DESC, IMENU_STEP, IMENU_OPEN, IMENU_ROLLBACK = 0x43A1D408, 0x404EA570, 0x404D907C, 0x404DB3BC
+IMENU_COMMIT, TRANSACTION = 0x404DB3B8, 0xA032BBD5C             # +28 commit; DS transaction open byte
 IMENU_APPLY_SITE, F_APPLY = 0x404D948C, 0x403EC4D0            # b 403EC4D0: list cursor applies w1 to item w0
 IMENU_POPUP_SITE, IMENU_POPUP_NEXT, IMENU_POPUP_WORD = 0x404EA144, 0x404EA148, 0x7829796C  # strh w12,[x11,x9,lsl #1]
 MOVN_W = 0x12800000                                           # movn wN,#0: -1
@@ -210,9 +219,16 @@ def code(count, label_id):
     # OK actions: stock rows clear the flag first; XPan stores 16:9 with the flag set
     for name, stub in zip(('ok_fx', 'ok_dx', 'ok_54', 'ok_11', 'ok_169'), STUBS):
         blk.label(name)
-        blk.mov_x64(16, FLAG)
-        blk.strb_w(31, 16)
+        blk.mov_x(17, 30)
+        blk.bl('clear_xpan')
+        blk.mov_x(30, 17)
         blk.b(stub)
+    blk.label('clear_xpan')                     # no XPan, and no Fn+dial XPan pick still waiting (x16 only)
+    blk.mov_x64(16, FLAG)
+    blk.strb_w(31, 16)
+    blk.mov_x64(16, ram(va(PENDING)))
+    blk.strb_w(31, 16)
+    blk.ret()
     blk.label('ok_xpan')                        # 16:9 first, then the flag: sync clears a flag without 16:9
     blk.stp_pre(19, 30, -16)
     blk.mov_w(0, ITEM_ID & 0xFFFF)
@@ -301,13 +317,15 @@ def code(count, label_id):
     # slot copy, 32-bit case: carry the flag byte with 07000603h (x8 source, x10 destination)
     blk.label('copy')
     blk.raw(COPY_WORD)
-    blk.lsl_wi(9, 20, 16)
-    blk.mov_w(11, 0)
-    blk.movk_w16(11, ITEM_ID & 0xFFFF)
-    blk.cmp_w(9, 11)
+    blk.raw(0xB9400109)                     # ldr w9,[x8]: the stock copy first, so the flag never leads the area
+    blk.raw(0xB9000149)                     # str w9,[x10]
+    blk.lsl_wi(16, 20, 16)
+    blk.mov_w(17, 0)
+    blk.movk_w16(17, ITEM_ID & 0xFFFF)
+    blk.cmp_w(16, 17)
     blk.b_cond('ne', 'copy_done')
-    blk.raw(0x385FE109)                     # ldurb w9,[x8,#-2]
-    blk.raw(0x381FE149)                     # sturb w9,[x10,#-2]
+    blk.raw(0x385FE110)                     # ldurb w16,[x8,#-2]
+    blk.raw(0x381FE150)                     # sturb w16,[x10,#-2]
     blk.label('copy_done')
     blk.b(COPY_NEXT)
     icons(blk)
@@ -377,15 +395,51 @@ def bars(blk, count):
     blk.b(OSIZE_NEXT)
     # bank request of the overlay: keep the size table in step with XPan (milestone 3), then paint when XPan
     # is active on a running live view
+    def want(p):
+        """w7 = 1: paint (XPan active, 16:9 shown); 0: clean up earlier bars; neither: present unchanged."""
+        blk.mov_x64(16, ram(va(STATE_AT + 1)))
+        blk.ldrb_w(7, 16)
+        blk.cbz_w(7, p + '_dirty')
+        blk.mov_x64(16, EFFECTIVE_AREA)
+        blk.ldrb_w(16, 16)
+        blk.cmp_wi(16, VALUE_169)
+        blk.b_cond('eq', p + '_want')
+        blk.mov_w(7, 0)                         # e.g. a DX lens: the picture isn't 16:9
+        blk.label(p + '_dirty')
+        blk.mov_x64(16, ram(va(DIRTY)))
+        blk.ldrb_w(16, 16)
+        blk.cbz_w(16, 'flip')
+        blk.label(p + '_want')
+
+    def surface(rec_index, rec_base, colour_slot, p):
+        """x9 = surface record; require YYUV+alpha, x4 = colour at its start, x3 = alpha right after w14 x w13."""
+        blk.ldr_w(9, rec_base)
+        blk.cmp_wi(9, SURFACE_YYUVA)
+        blk.b_cond('ne', 'flip')
+        blk.mov_w(16, SURFACE_RECORD)
+        blk.madd_x(9, rec_index, 16, rec_base)
+        blk.ldr_x(4, 31, colour_slot)           # colour CPU address handed to 402AB038 (bus = +400000000h)
+        blk.ldr_x(12, 9, 0x18)
+        raw(cmp_x(4, 12), 'cmp x4, x12')
+        blk.b_cond('ne', 'flip')                # window offset: not a full-surface present
+        raw(umull(12, 14, 13), 'umull x12, w14, w13')
+        blk.add_x(3, 4, 12, lsl=1)
+        blk.ldr_x(12, 9, 0x20)
+        raw(cmp_x(3, 12), 'cmp x3, x12')
+        blk.b_cond('ne', 'flip')                # plane layout differs from the recorded size
+        blk.b('frame_mode')
+
+    # bank request of the overlay: keep the tables in step with XPan, then paint (or clean up) layers 2-3
     blk.label('present')
     blk.mov_x(15, 30)
     blk.bl('sync')
     blk.mov_x(30, 15)
     blk.cmp_wi(1, 2)
+    blk.b_cond('eq', 'present_layer')
+    blk.cmp_wi(1, 3)                            # the EVF output presents its overlay as layer 3
     blk.b_cond('ne', 'flip')
-    blk.mov_x64(16, ram(va(STATE_AT + 1)))
-    blk.ldrb_w(17, 16)
-    blk.cbz_w(17, 'flip')                       # XPan not active (see sync): no bars
+    blk.label('present_layer')
+    want('present')
     blk.ldr_x(9, 0, 8)
     blk.mov_x64(16, LCD_BASE)
     raw(cmp_x(9, 16), 'cmp x9, x16')
@@ -395,6 +449,7 @@ def bars(blk, count):
     blk.cbz_w(17, 'flip')                       # live view not running on this unit
     blk.ldrh_w(14, 11, 8)                       # overlay width and height as last programmed
     blk.ldrh_w(13, 11, 10)
+    raw(HEIGHT_MASK, 'and w13, w13, #0x3fff')   # bits 30-31 of the size register are flags
     blk.mov_x64(16, DISPLAY_SEL)
     blk.ldr_w(16, 16)
     for n, (w, h) in enumerate(PANELS):         # must be the size of the output shown now
@@ -408,54 +463,15 @@ def bars(blk, count):
         blk.label(f'panel{n}_next')
     blk.b('flip')
     blk.label('panel_ok')
-    blk.ldr_x(4, 31, 0x28)                      # caller's overlay record: colour CPU address (bus = +400000000h)
-    raw(umull(12, 14, 13), 'umull x12, w14, w13')
-    blk.add_x(3, 4, 12, lsl=1)                  # alpha plane follows the YYUV plane
-    blk.label('frame')                          # paint w14 x w13 frame: x4 colour, x3 alpha, then present
-    raw(add_w_lsl(8, 14, 14, 3), 'add w8, w14, w14, lsl #3')
-    raw(lsr_wi(8, 8, 4), 'lsr w8, w8, #4')      # 16:9 picture height = width * 9 / 16, centred on the panel
-    blk.cmp_w(8, 13)
-    blk.b_cond('hi', 'flip')
-    blk.sub_w(9, 13, 8)
-    raw(lsr_wi(9, 9, 1), 'lsr w9, w9, #1')      # 16:9 picture top
-    blk.lsl_wi(10, 14, 3)
-    raw(add_w_lsl(10, 10, 10, 1), 'add w10, w10, w10, lsl #1')
-    blk.mov_w(16, 65)
-    raw(udiv_w(10, 10, 16), 'udiv w10, w10, w16')
-    raw(lsr_wi(10, 10, 1), 'lsr w10, w10, #1')
-    blk.lsl_wi(10, 10, 1)                       # 65:24 height = width * 24 / 65, even
-    blk.sub_w(16, 8, 10)
-    raw(lsr_wi(16, 16, 1), 'lsr w16, w16, #1')
-    blk.add_w(16, 16, 9)                        # first 65:24 row
-    blk.add_w(17, 16, 10)                       # first row below the 65:24 window
-    blk.mov_x64(12, RAM_LO)
-    raw(cmp_x(4, 12), 'cmp x4, x12')
-    blk.b_cond('lo', 'flip')
-    blk.mov_x64(12, RAM_HI - 0x400000)
-    raw(cmp_x(4, 12), 'cmp x4, x12')
-    blk.b_cond('hs', 'flip')
-    blk.mov_x(15, 30)
-    blk.stp_pre(17, 13, -16)
-    blk.mov_w(5, 0)
-    blk.mov_wr(6, 16)
-    blk.bl('paint')
-    blk.ldp_post(5, 6, 16)
-    blk.bl('paint')
-    raw(DSB_SY, 'dsb sy')
-    blk.mov_x(30, 15)
-    blk.label('flip')
-    blk.b(F_PRESENT)
-    # HDMI bank request (402C3A58): same as above for unit 1C7h, layer 2, sizes in HDMI_SIZES only, and only
-    # when the surface's own colour and alpha planes match the recorded size
+    surface(23, 24, 0x28, 'present')            # x24 surface descriptor, x23 record index (402CF9A0)
+    # HDMI bank request (402C3A58): unit 1C7h, layer 2, sizes in HDMI_SIZES only
     blk.label('hdmi_present')
     blk.mov_x(15, 30)
     blk.bl('sync')
     blk.mov_x(30, 15)
     blk.cmp_wi(1, 2)
     blk.b_cond('ne', 'flip')
-    blk.mov_x64(16, ram(va(STATE_AT + 1)))
-    blk.ldrb_w(17, 16)
-    blk.cbz_w(17, 'flip')
+    want('hdmi')
     blk.ldr_x(9, 0, 8)
     blk.mov_x64(16, HDMI_BASE)
     raw(cmp_x(9, 16), 'cmp x9, x16')
@@ -463,11 +479,9 @@ def bars(blk, count):
     blk.mov_x64(11, ram(va(STATE_AT + UNIT_HDMI)))
     blk.ldrb_w(17, 11)
     blk.cbz_w(17, 'flip')                       # HDMI live view not running
-    blk.ldr_w(9, 20)
-    blk.cmp_wi(9, SURFACE_YYUVA)
-    blk.b_cond('ne', 'flip')
     blk.ldrh_w(14, 11, 8)
     blk.ldrh_w(13, 11, 10)
+    raw(HEIGHT_MASK, 'and w13, w13, #0x3fff')
     for n, (w, h) in enumerate(HDMI_SIZES):
         blk.cmp_wi(14, w)
         blk.b_cond('ne', f'hdmi{n}_next')
@@ -476,83 +490,175 @@ def bars(blk, count):
         blk.label(f'hdmi{n}_next')
     blk.b('flip')
     blk.label('hdmi_size_ok')
-    blk.madd_x(9, 26, 21, 20)                   # surface record, as 402C3A1C computes it
-    blk.ldr_x(4, 31, 0xA8)                      # colour CPU address handed to 402AB038
-    blk.ldr_x(12, 9, 0x18)
-    raw(cmp_x(4, 12), 'cmp x4, x12')
-    blk.b_cond('ne', 'flip')                    # window offset: not a full-surface present
-    raw(umull(12, 14, 13), 'umull x12, w14, w13')
-    blk.add_x(3, 4, 12, lsl=1)
-    blk.ldr_x(12, 9, 0x20)
-    raw(cmp_x(3, 12), 'cmp x3, x12')
-    blk.b_cond('ne', 'flip')                    # plane layout differs from the recorded size
-    blk.b('frame')
-    # paint rows [w5, w6) of width x14: x3 alpha plane, x4 YYUV plane; transparent -> opaque black, icons kept
-    blk.label('paint')
-    blk.label('row')
-    blk.cmp_w(5, 6)
-    blk.b_cond('hs', 'paint_done')
-    blk.madd_x(7, 5, 14, 3)
-    blk.madd_x(8, 5, 14, 31)
-    blk.add_x(8, 4, 8, lsl=1)
-    for phase in ('inv', 'cln'):
-        if phase == 'cln':
-            blk.label('px_done')
-        blk.mov_w(9, 0)
-        blk.label(phase)
-        blk.add_x(10, 7, 9)
-        raw(dc_civac(10), 'dc civac, x10')
-        blk.add_x(11, 8, 9, lsl=1)
-        raw(dc_civac(11), 'dc civac, x11')
-        blk.add_xi(11, 11, 64)
-        raw(dc_civac(11), 'dc civac, x11')
-        blk.add_xi(9, 9, 64)
-        raw(cmp_x(9, 14), 'cmp x9, x14')
-        blk.b_cond('lo', phase)
+    surface(26, 20, 0xA8, 'hdmi')               # x20 surface descriptor, x26 record (x21 = 48h, 402C3A1C)
+    # verified frame w14 x w13 (x4 colour, x3 alpha): paint, or clean up and count down
+    blk.label('frame_mode')
+    blk.mov_x64(16, ram(va(DIRTY)))
+    blk.cbz_w(7, 'frame_clean_count')
+    blk.mov_w(17, DIRTY_FRAMES)
+    blk.strb_w(17, 16)
+    blk.b('frame_paint')
+    blk.label('frame_clean_count')
+    blk.ldrb_w(17, 16)
+    blk.subs_wi(17, 17, 1)
+    blk.strb_w(17, 16)
+    blk.b('frame_clean')
+    for kind in ('paint', 'clean'):
+        blk.label('frame_' + kind)
+        raw(add_w_lsl(8, 14, 14, 3), 'add w8, w14, w14, lsl #3')
+        raw(lsr_wi(8, 8, 4), 'lsr w8, w8, #4')  # 16:9 picture height = width * 9 / 16, centred on the panel
+        blk.cmp_w(8, 13)
+        blk.b_cond('hi', 'flip')
+        blk.sub_w(9, 13, 8)
+        raw(lsr_wi(9, 9, 1), 'lsr w9, w9, #1')  # 16:9 picture top
+        blk.lsl_wi(10, 14, 3)
+        raw(add_w_lsl(10, 10, 10, 1), 'add w10, w10, w10, lsl #1')
+        blk.mov_w(16, 65)
+        raw(udiv_w(10, 10, 16), 'udiv w10, w10, w16')
+        raw(lsr_wi(10, 10, 1), 'lsr w10, w10, #1')
+        blk.lsl_wi(10, 10, 1)                   # 65:24 height = width * 24 / 65, even
+        blk.sub_w(16, 8, 10)
+        raw(lsr_wi(16, 16, 1), 'lsr w16, w16, #1')
+        blk.add_w(16, 16, 9)                    # first 65:24 row
+        blk.add_w(17, 16, 10)                   # first row below the 65:24 window
+        blk.mov_x64(12, RAM_LO)
+        raw(cmp_x(4, 12), 'cmp x4, x12')
+        blk.b_cond('lo', 'flip')
+        blk.mov_x64(12, RAM_HI - 0x800000)
+        raw(cmp_x(4, 12), 'cmp x4, x12')
+        blk.b_cond('hs', 'flip')
+        blk.mov_x(15, 30)
+        blk.stp_pre(17, 13, -16)
+        blk.mov_w(5, 0)
+        blk.mov_wr(6, 16)
+        blk.bl(kind)
+        blk.ldp_post(5, 6, 16)
+        blk.bl(kind)
         raw(DSB_SY, 'dsb sy')
-        if phase == 'inv':
+        blk.mov_x(30, 15)
+        blk.b('flip')
+    blk.label('flip')
+    blk.b(F_PRESENT)
+
+    def rows(kind, group):
+        """Rows [w5, w6) of width x14 (x3 alpha plane, x4 YYUV plane), group() per 8 pixels at x9; cache
+        lines are invalidated before reading and cleaned after writing."""
+        blk.label(kind)
+        blk.label(kind + '_row')
+        blk.cmp_w(5, 6)
+        blk.b_cond('hs', kind + '_done')
+        blk.madd_x(7, 5, 14, 3)
+        blk.madd_x(8, 5, 14, 31)
+        blk.add_x(8, 4, 8, lsl=1)
+        for phase in ('inv', 'cln'):
+            if phase == 'cln':
+                blk.label(kind + '_px_done')
             blk.mov_w(9, 0)
-            blk.label('px')
-            raw(ldr_xr(10, 7, 9), 'ldr x10, [x7, x9]')
-            blk.cbz_x(10, 'fill')
-            raw(cmn_x1(10), 'cmn x10, #1')
-            blk.b_cond('eq', 'next')
-            blk.mov_w(12, 0)
-            blk.label('slow')
-            blk.add_x(13, 9, 12)
-            blk.ldrb_idx(10, 7, 13)
-            blk.cmp_wi(10, 255)
-            blk.b_cond('eq', 'slow_next')
-            blk.cbnz_w(10, 'opaque')
-            blk.add_x(16, 8, 13, lsl=1)         # Y of pixel p: 2p - (p & 1)
-            raw(and_x1(17, 13), 'and x17, x13, #1')
-            raw(sub_x(16, 16, 17), 'sub x16, x16, x17')
-            blk.mov_w(17, BLACK_Y)
-            blk.strb_w(17, 16)
-            blk.label('opaque')
-            blk.mov_w(16, 255)
-            raw(strb_r(16, 7, 13), 'strb w16, [x7, x13]')
-            blk.label('slow_next')
-            blk.add_xi(12, 12, 1)
-            raw(cmp_xi(12, 8), 'cmp x12, #8')
-            blk.b_cond('lo', 'slow')
-            blk.b('next')
-            blk.label('fill')
-            raw(movn_x0(11), 'mov x11, #-1')
-            raw(str_xr(11, 7, 9), 'str x11, [x7, x9]')
-            blk.add_x(12, 8, 9, lsl=1)
-            blk.mov_x64(13, BLACK_PAIR)
-            blk.str_x(13, 12, 0)
-            blk.str_x(13, 12, 8)
-            blk.label('next')
-            blk.add_xi(9, 9, 8)
+            blk.label(kind + '_' + phase)
+            blk.add_x(10, 7, 9)
+            raw(dc_civac(10), 'dc civac, x10')
+            blk.add_x(11, 8, 9, lsl=1)
+            raw(dc_civac(11), 'dc civac, x11')
+            blk.add_xi(11, 11, 64)
+            raw(dc_civac(11), 'dc civac, x11')
+            blk.add_xi(9, 9, 64)
             raw(cmp_x(9, 14), 'cmp x9, x14')
-            blk.b_cond('lo', 'px')
-            blk.b('px_done')
-    blk.add_xi(5, 5, 1)
-    blk.b('row')
-    blk.label('paint_done')
-    blk.ret()
+            blk.b_cond('lo', kind + '_' + phase)
+            raw(DSB_SY, 'dsb sy')
+            if phase == 'inv':
+                blk.mov_w(9, 0)
+                blk.mov_x64(11, MARK * 0x0101010101010101)
+                blk.label(kind + '_px')
+                raw(ldr_xr(10, 7, 9), 'ldr x10, [x7, x9]')
+                group()
+                blk.label(kind + '_next')
+                blk.add_xi(9, 9, 8)
+                raw(cmp_x(9, 14), 'cmp x9, x14')
+                blk.b_cond('lo', kind + '_px')
+                blk.b(kind + '_px_done')
+        blk.add_xi(5, 5, 1)
+        blk.b(kind + '_row')
+        blk.label(kind + '_done')
+        blk.ret()
+
+    def paint_group():
+        """Transparent pixels become marked black; drawn pixels (icons) stay."""
+        blk.cbz_x(10, 'paint_fill')
+        raw(cmn_x1(10), 'cmn x10, #1')
+        blk.b_cond('eq', 'paint_next')
+        raw(cmp_x(10, 11), 'cmp x10, x11')
+        blk.b_cond('eq', 'paint_next')          # already ours
+        blk.mov_w(12, 0)
+        blk.label('paint_pair')                 # pixels p, p+1 share U and V
+        blk.add_x(13, 9, 12)
+        raw(0x786D68EA, 'ldrh w10, [x7, x13]')
+        blk.add_x(16, 8, 13, lsl=1)             # Y of pixel p (p even); Y p+1, U, V follow
+        blk.cbnz_w(10, 'paint_mixed')
+        blk.mov_w(10, MARK * 0x101)
+        raw(0x782D68EA, 'strh w10, [x7, x13]')
+        blk.mov_w(17, 0)
+        blk.movk_w16(17, 0x8080)
+        blk.str_w(17, 16)                       # Y Y U V = 0 0 80h 80h
+        blk.b('paint_pair_next')
+        blk.label('paint_mixed')                # per pixel: 0 -> marked black; 1..FDh -> composited over black
+        for half, (lo, label) in enumerate(((True, 'paint_lo'), (False, 'paint_hi'))):
+            if lo:
+                raw(0x12001D51, 'and w17, w10, #0xff')
+            else:
+                raw(lsr_wi(17, 10, 8), 'lsr w17, w10, #8')
+                blk.add_xi(13, 13, 1)
+            blk.cbz_w(17, label + '_clear')
+            blk.cmp_wi(17, MARK)
+            blk.b_cond('hs', label + '_done')   # FEh ours, FFh opaque
+            blk.ldrb_w(11, 16, half)
+            raw(0x1B117D6B, 'mul w11, w11, w17')
+            raw(lsr_wi(11, 11, 8), 'lsr w11, w11, #8')
+            blk.strb_w(11, 16, half)
+            blk.mov_w(17, 255)
+            raw(strb_r(17, 7, 13), 'strb w17, [x7, x13]')
+            blk.b(label + '_done')
+            blk.label(label + '_clear')
+            blk.strb_w(31, 16, half)
+            blk.mov_w(17, MARK)
+            raw(strb_r(17, 7, 13), 'strb w17, [x7, x13]')
+            blk.label(label + '_done')
+        blk.label('paint_pair_next')
+        blk.add_xi(12, 12, 2)
+        raw(cmp_xi(12, 8), 'cmp x12, #8')
+        blk.b_cond('lo', 'paint_pair')
+        blk.mov_x64(11, MARK * 0x0101010101010101)  # x11 was a scratch register above
+        blk.b('paint_next')
+        blk.label('paint_fill')
+        raw(str_xr(11, 7, 9), 'str x11, [x7, x9]')
+        blk.add_x(12, 8, 9, lsl=1)
+        blk.mov_x64(13, BLACK_PAIR)
+        blk.str_x(13, 12, 0)
+        blk.str_x(13, 12, 8)
+
+    def clean_group():
+        """Marked pixels become transparent again."""
+        blk.cbz_x(10, 'clean_next')
+        raw(cmn_x1(10), 'cmn x10, #1')
+        blk.b_cond('eq', 'clean_next')
+        raw(cmp_x(10, 11), 'cmp x10, x11')
+        blk.b_cond('ne', 'clean_mixed')
+        raw(str_xr(31, 7, 9), 'str xzr, [x7, x9]')
+        blk.b('clean_next')
+        blk.label('clean_mixed')
+        blk.mov_w(12, 0)
+        blk.label('clean_byte')
+        blk.add_x(13, 9, 12)
+        blk.ldrb_idx(10, 7, 13)
+        blk.cmp_wi(10, MARK)
+        blk.b_cond('ne', 'clean_byte_next')
+        raw(strb_r(31, 7, 13), 'strb wzr, [x7, x13]')
+        blk.label('clean_byte_next')
+        blk.add_xi(12, 12, 1)
+        raw(cmp_xi(12, 8), 'cmp x12, #8')
+        blk.b_cond('lo', 'clean_byte')
+
+    rows('paint', paint_group)
+    rows('clean', clean_group)
     sizes(blk, count)
     blk.bars_raws = raws
 
@@ -560,7 +666,14 @@ def bars(blk, count):
 def sizes(blk, count):
     """Milestones 3-4: while XPan is active the 16:9 entries of the still-size and AF-grid tables hold 65:24
     values. Active = XPan flag, image area 16:9 and the photo/video selector on photo; STATE_AT+1 records it."""
-    blk.label('sync')
+    blk.label('sync')                           # x0-x2 and x15 are left alone; another task syncing: skip
+    blk.mov_x64(8, ram(va(LOCK)))
+    blk.label('sync_lock')
+    blk.raw(LDAXRB)
+    blk.cbnz_w(7, 'sync_busy')
+    blk.mov_w(7, 1)
+    blk.raw(STXRB)
+    blk.cbnz_w(6, 'sync_lock')
     blk.mov_x64(16, ram(va(PENDING)))           # Fn+dial picked XPan: set the flag once the area reads 16:9
     blk.ldrb_w(17, 16)
     blk.cbz_w(17, 'sync_flag')
@@ -598,7 +711,18 @@ def sizes(blk, count):
     blk.ldrb_w(11, 16)
     blk.cmp_w(11, 10)
     blk.b_cond('eq', 'sync_done')
-    blk.strb_w(10, 16)
+    blk.mov_x64(12, PIPE_BUSY)                  # shots still in the pipeline: switch later (at most DEFER_FRAMES)
+    blk.ldr_w(12, 12)
+    blk.mov_x64(14, ram(va(DEFER)))
+    blk.ldrh_w(13, 14)
+    blk.cbz_w(12, 'sync_switch')
+    blk.cmp_wi(13, DEFER_FRAMES)
+    blk.b_cond('hs', 'sync_switch')
+    blk.add_xi(13, 13, 1)
+    blk.strh_w(13, 14)
+    blk.b('sync_done')
+    blk.label('sync_switch')
+    blk.strh_w(31, 14)
     blk.mov_x64(12, va(SWAP_TABLE_AT))
     blk.mov_w(13, count)
     blk.label('sync_row')
@@ -611,7 +735,12 @@ def sizes(blk, count):
     blk.add_xi(12, 12, 16)
     blk.subs_wi(13, 13, 1)
     blk.b_cond('ne', 'sync_row')
+    blk.strb_w(10, 16)                          # recorded only once every word is rewritten
     blk.label('sync_done')
+    blk.raw(STLRB)
+    blk.ret()
+    blk.label('sync_busy')
+    blk.raw(CLREX)
     blk.ret()
 
 
@@ -791,20 +920,18 @@ def imenu(blk, label_id):
     blk.cbnz_w(17, 'imenu_step_leave')          # XPan -> next row: clear, stock step
     blk.mov_w(17, 1)                            # 16:9 -> XPan
     blk.strb_w(17, 16)
-    blk.raw(MOVN_W | 9)
     blk.b('imenu_step_toggled')
     blk.label('imenu_step_from_back')
     blk.cbz_w(17, 'imenu_step_stock')           # 16:9 -> previous row: stock
-    blk.strb_w(31, 16)                          # XPan -> 16:9
-    blk.mov_w(9, 1)
+    blk.bl('clear_xpan')                        # XPan -> 16:9
     blk.label('imenu_step_toggled')
     blk.ldr_x(4, 31, 48)
-    blk.str_w(9, 4)
+    blk.str_w(31, 4)                            # same row: the pop-up cursor doesn't move
     blk.bl('sync')
     blk.mov_w(0, 1)
     blk.b('imenu_step_exit')
     blk.label('imenu_step_leave')
-    blk.strb_w(31, 16)
+    blk.bl('clear_xpan')
     blk.label('imenu_step_stock')
     blk.ldp(0, 1, 16)
     blk.ldp(2, 3, 32)
@@ -834,19 +961,32 @@ def imenu(blk, label_id):
     blk.ldp(4, 19, 48)
     blk.ldp_post(29, 30, 64)
     blk.ret()
-    blk.label('imenu_open')                     # list opens: remember the flag for a cancel
+    blk.label('imenu_open')                     # list opens: remember the flag (bit 7 = armed) for a cancel
     blk.mov_x64(16, FLAG)
     blk.ldrb_w(17, 16)
+    blk.raw(0x32190231)                         # orr w17, w17, #0x80
     blk.mov_x64(16, ram(va(SAVED)))
     blk.strb_w(17, 16)
     blk.b(IMENU_OPEN)
-    blk.label('imenu_rollback')                 # list cancelled: stock rollback, then the remembered flag
-    blk.stp_pre(19, 30, -16)
-    blk.bl(IMENU_ROLLBACK)
+    blk.label('imenu_commit')                   # list confirmed: nothing to restore
+    blk.mov_x64(16, ram(va(SAVED)))
+    blk.strb_w(31, 16)
+    blk.b(IMENU_COMMIT)
+    blk.label('imenu_rollback')                 # also called on plain i-menu exits: restore only when the list
+    blk.stp_pre(19, 30, -16)                    # was opened and its transaction (A032BBD5C) is still open
+    blk.mov_x64(16, TRANSACTION)
+    blk.ldrb_w(19, 16)
     blk.mov_x64(16, ram(va(SAVED)))
     blk.ldrb_w(17, 16)
+    blk.cmp_wi(19, 1)
+    blk.raw(0x1A9F0233)                         # csel w19, w17, wzr, eq
+    blk.strb_w(31, 16)
+    blk.bl(IMENU_ROLLBACK)
+    blk.tbz_w(19, 7, 'imenu_rollback_done')
+    blk.raw(0x12000271)                         # and w17, w19, #1
     blk.mov_x64(16, FLAG)
     blk.strb_w(17, 16)
+    blk.label('imenu_rollback_done')
     blk.ldp_post(19, 30, 16)
     blk.ret()
     blk.label('imenu_apply')                    # 404D948C: the list has no XPan row; any image-area apply clears it
@@ -854,8 +994,9 @@ def imenu(blk, label_id):
     blk.movk_w16(16, ITEM_ID >> 16)
     blk.cmp_w(0, 16)
     blk.b_cond('ne', 'imenu_apply_go')
-    blk.mov_x64(16, FLAG)
-    blk.strb_w(31, 16)
+    blk.mov_x(17, 30)
+    blk.bl('clear_xpan')
+    blk.mov_x(30, 17)
     blk.label('imenu_apply_go')
     blk.b(F_APPLY)
     blk.label('imenu_popup')                    # 404EA144: dial list slot from triple w8 (3 = 16:9), w12/w10
@@ -940,7 +1081,8 @@ def check_stock(img):
             'Unexpected image-area page record')
     rows = [struct.unpack_from('<11I', img.old, off(ROWS) + 44 * i) for i in range(5)]
     require(tuple(r[0] for r in rows) == LABELS and tuple(r[6] for r in rows) == ITEMS, 'Unexpected image-area rows')
-    require(img.u32(off(COPY_SITE)) == COPY_WORD and img.u32(off(COPY_NEXT)) == 0xB9400109, 'Unexpected slot copy code')
+    require([img.u32(off(COPY_SITE + 4 * i)) for i in range(4)] == [COPY_WORD, 0xB9400109, 0xB9000149, 0xB9400108]
+            and COPY_NEXT == COPY_SITE + 12, 'Unexpected slot copy code')   # ldp; ldr w9,[x8]; str w9,[x10]; ldr w8,[x8]
     # direct input start/stop: ldr x8,[x0,#8] ; mov w9,#1|#2 ; str w9,[x8,#0x100]
     require(struct.unpack_from('<3I', img.old, off(START_SITE) - 8) == (0xF9400408, 0x320003E9, START_WORD) and
             struct.unpack_from('<3I', img.old, off(STOP_SITE) - 8) == (0xF9400408, 0x321F03E9, START_WORD),
@@ -1017,7 +1159,7 @@ def build_main(data, strings):
     img.put(off(COPY_SITE), branch(COPY_SITE, blk.labels['copy']),
             'slot copy, 32-bit case: hook for the XPan flag byte', expect=struct.pack('<I', COPY_WORD))
     rows_swap = swaps(img, label_id)
-    require(at <= SWAP_TABLE_AT and SWAP_TABLE_AT + 16 * len(rows_swap) <= STATE_AT, 'XPan GUI area overlaps its tables')
+    require(at <= SWAP_TABLE_AT and SWAP_TABLE_AT + 16 * len(rows_swap) <= STATE_AT, f'XPan GUI area overlaps its tables ({at:#x})')
     for address, stock, _ in rows_swap:
         require(img.u32(off(address)) == stock, f'Unexpected stock table word at {address:#x}')
     img.put(SWAP_TABLE_AT, swap_table(rows_swap), 'still-size and AF-grid words: 16:9 and 65:24 values', expect_zero=True)
@@ -1035,8 +1177,11 @@ def build_main(data, strings):
             'MakerNote CropArea: 65:24 window while XPan is active', expect=struct.pack('<I', CROP_WORD))
     img.put(off(HDMI_SITE), branch(HDMI_SITE, blk.labels['hdmi_present'], link=True),
             'HDMI overlay bank request: sync, then 65:24 bars', expect=branch(HDMI_SITE, F_PRESENT, link=True))
-    require(struct.unpack_from('<IIQ', img.old, off(IMAGE_TABLE + 24 * IMAGE_COUNT)) != (IMAGE_FLAGS, 0, 0)
-            and img.u32(off(IMAGE_TABLE + 24 * (IMAGE_COUNT - 1))) == IMAGE_FLAGS, 'Unexpected image table end')
+    last_flags, last_size, _, last_png = struct.unpack_from('<IIQQ', img.old, off(IMAGE_TABLE + 24 * (IMAGE_COUNT - 1)))
+    require(img.old[off(IMAGE_BASE_SITE):off(IMAGE_BASE_SITE) + 16] == mov_x0(IMAGE_TABLE)
+            and last_flags == IMAGE_FLAGS and IMAGE_TABLE - 8 < last_png + last_size <= IMAGE_TABLE,
+            'Unexpected image table')                # the last record's PNG ends right before the table
+    require(all(w % 64 == 0 and h % 2 == 0 for w, h in PANELS + HDMI_SIZES), 'Painter needs w % 64, even h')
     pngs = [xpan_icon(img, STOCK_LV, 2), xpan_icon(img, STOCK_MENU, 4)]
     at = ICON_AT + 48
     records = b''
@@ -1077,17 +1222,21 @@ def build_main(data, strings):
     img.put(off(IMENU_APPLY_SITE), branch(IMENU_APPLY_SITE, blk.labels['imenu_apply']),
             'i-menu list apply: image area clears XPan', expect=branch(IMENU_APPLY_SITE, F_APPLY))
     for slot, name, stock in ((0x10, 'imenu_step', IMENU_STEP), (0x20, 'imenu_open', IMENU_OPEN),
-                              (0x30, 'imenu_rollback', IMENU_ROLLBACK)):
+                              (0x28, 'imenu_commit', IMENU_COMMIT), (0x30, 'imenu_rollback', IMENU_ROLLBACK)):
         img.put(off(IMENU_DESC + slot), struct.pack('<Q', blk.labels[name]), f'i-menu image area: {name}',
                 expect=struct.pack('<Q', stock))
     listing = blk.listing(Cs(CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN))
-    raws = {0x12000002: 'and w2, w0, #1', 0x385FE109: 'ldurb w9, [x8, #-2]', 0x381FE149: 'sturb w9, [x10, #-2]',
+    raws = {0x12000002: 'and w2, w0, #1',
             COPY_WORD: 'ldp x10, x8, [sp]', LOOKUP_WORD: 'ldr x9, [x9]', LV_ICON_WORD: 'mov w0, #0x25',
             DIAL_FLAGS_WORD: 'ldp x19, x30, [sp, #0xc0]', DIAL_CUR_WORD: 'ldr w24, [x25]', DIAL_SET_WORD: 'ldr w9, [x8]',
+            0x12800013: 'mov w19, #-1', 0x2A100231: 'orr w17, w17, w16', 0x32190231: 'orr w17, w17, #0x80',
+            0x1A9F0233: 'csel w19, w17, wzr, eq', 0x12000271: 'and w17, w19, #1', LDAXRB: 'ldaxrb w7, [x8]',
+            STXRB: 'stxrb w6, w7, [x8]', STLRB: 'stlrb wzr, [x8]', CLREX: 'clrex', 0xB9000149: 'str w9, [x10]',
+            0x385FE110: 'ldurb w16, [x8, #-2]', 0x381FE150: 'sturb w16, [x10, #-2]',
             FN_POPUP_WORD: 'mov w14, #0x582', CROP_WORD: 'strh w8, [x22, #6]', LDUR_AREA: 'ldur w10, [x21, #-0x14]', IMENU_POPUP_WORD: 'strh w12, [x11, x9, lsl #1]', **blk.bars_raws}
     for x, w, t in listing:
         word = int.from_bytes(bytes.fromhex(w), 'little')
         require(word not in raws or t == raws[word], f'Bad raw encoding at {x:#x}: {t}')
-    return img, dict(prototype=True, milestone=4, label_id=label_id, flag=hex(FLAG), item=hex(ITEM_XPAN),
+    return img, dict(prototype=True, milestone=5, label_id=label_id, flag=hex(FLAG), item=hex(ITEM_XPAN),
                      routine=hex(va(CODE_AT)), page=hex(va(page_at)), labels={k: hex(v) for k, v in blk.labels.items()},
                      code=[dict(va=hex(x), word=w, text=t) for x, w, t in listing])
