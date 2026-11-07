@@ -25,6 +25,7 @@ def compatibility(eg, features):
     chosen = selected_features(features)
     require(len(eg)==81807711 and sha(eg)==STOCK_SHA, 'Incompatible input: exact original C3.11 EG required')
     recipes=json.loads((ROOT/'resources/combinations.json').read_text())
+    require('+'.join(chosen) in recipes['profiles'], 'No reviewed recipe for '+'+'.join(chosen))
     profile=dict(recipes['profiles']['+'.join(chosen)])
     profile['patches']=[recipes['patches'][i] for i in profile['patches']]
     return {'composition':profile}, eg[0x14EAA90:0x14EAA98].decode()

@@ -5,11 +5,14 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 from tools.check_release import SOURCE_FILES,MANIFEST,TAG,check_release,need
 from z8patch.compiled import compile_unit
+from features import PROTOTYPES
 
 def git(*args):return subprocess.check_output(['git','-C',str(ROOT),*args])
 def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--tag',required=True)
-    ap.add_argument('--compiler',default='clang');ap.add_argument('--output',type=Path,required=True);a=ap.parse_args()
+    ap.add_argument('--compiler',default='clang');ap.add_argument('--output',type=Path,required=True)
+    ap.add_argument('--allow-prototypes',action='store_true',help='Package even though prototype features are in the tree');a=ap.parse_args()
+    need(a.allow_prototypes or not PROTOTYPES,'Prototype features in the tree ('+', '.join(PROTOTYPES)+'); they are source-checkout only. Pass --allow-prototypes to package them anyway')
     need(re.fullmatch(TAG,a.tag),'Invalid release tag');need(not a.output.exists(),'Output directory already exists')
     need(not git('status','--porcelain','--untracked-files=normal').strip(),'Commit source changes before packaging')
     commit=git('rev-parse','HEAD').decode().strip()

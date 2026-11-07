@@ -1,9 +1,11 @@
-"""Minimal AArch64 encoder for the handful of instruction forms the ProRes menu patch needs.
+"""Minimal AArch64 encoder for the handful of instruction forms the ProRes menu and XPan patches need.
 
 Every emitted word is disassembled again with Capstone by the caller (`Block.listing`), so a wrong
 encoding shows up as text that differs from what was asked for.  Offline only.
 """
 import struct
+
+COND = {'eq': 0, 'ne': 1, 'hs': 2, 'lo': 3, 'hi': 8, 'ls': 9, 'ge': 10, 'lt': 11, 'gt': 12, 'le': 13}
 
 
 def _imm(value, bits, signed=False):
@@ -55,12 +57,28 @@ class Block:
     def mov_wr(self, rd, rm):
         self._w(0x2A0003E0 | rm << 16 | rd)
 
+    def movn_w(self, rd, value):
+        """movn wD,#imm16: wD = ~imm16"""
+        self._w(0x12800000 | _imm(value, 16) << 5 | rd)
+
+    def movn_x(self, rd, value):
+        """movn xD,#imm16: xD = ~imm16"""
+        self._w(0x92800000 | _imm(value, 16) << 5 | rd)
+
+    def mov_w32(self, rd, value):
+        """mov wD,#low16 ; movk wD,#high16,lsl #16"""
+        self.mov_w(rd, value & 0xFFFF)
+        self.movk_w16(rd, value >> 16)
+
     # ---- arithmetic --------------------------------------------------
-    def add_w(self, rd, rn, rm):
-        self._w(0x0B000000 | rm << 16 | rn << 5 | rd)
+    def add_w(self, rd, rn, rm, lsl=0):
+        self._w(0x0B000000 | rm << 16 | _imm(lsl, 5) << 10 | rn << 5 | rd)
 
     def sub_w(self, rd, rn, rm):
         self._w(0x4B000000 | rm << 16 | rn << 5 | rd)
+
+    def sub_x(self, rd, rn, rm):
+        self._w(0xCB000000 | rm << 16 | rn << 5 | rd)
 
     def add_x(self, rd, rn, rm, lsl=0):
         self._w(0x8B000000 | rm << 16 | _imm(lsl, 6) << 10 | rn << 5 | rd)
@@ -74,16 +92,54 @@ class Block:
     def cmp_w(self, rn, rm):
         self._w(0x6B00001F | rm << 16 | rn << 5)
 
+    def cmp_x(self, rn, rm):
+        self._w(0xEB00001F | rm << 16 | rn << 5)
+
+    def cmp_xi(self, rn, value):
+        self._w(0xF100001F | _imm(value, 12) << 10 | rn << 5)
+
+    def cmn_xi(self, rn, value):
+        self._w(0xB100001F | _imm(value, 12) << 10 | rn << 5)
+
+    def and_w_mask(self, rd, rn, bits):
+        """and wD,wN,#((1 << bits) - 1): the low `bits` bits"""
+        self._w(0x12000000 | _imm(bits - 1, 5) << 10 | rn << 5 | rd)
+
     def and_w3(self, rd, rn):
         """and wD,wN,#3"""
-        self._w(0x12000400 | rn << 5 | rd)
+        self.and_w_mask(rd, rn, 2)
+
+    def orr_w(self, rd, rn, rm):
+        self._w(0x2A000000 | rm << 16 | rn << 5 | rd)
+
+    def orr_w_bit(self, rd, rn, bit):
+        """orr wD,wN,#(1 << bit): one set bit, a 32-bit element rotated right by 32 - bit"""
+        self._w(0x32000000 | ((32 - _imm(bit, 5)) % 32) << 16 | rn << 5 | rd)
+
+    def csel_w(self, rd, rn, rm, cond):
+        self._w(0x1A800000 | rm << 16 | COND[cond] << 12 | rn << 5 | rd)
 
     def madd_x(self, rd, rn, rm, ra):
         self._w(0x9B000000 | rm << 16 | ra << 10 | rn << 5 | rd)
 
+    def mul_w(self, rd, rn, rm):
+        """mul wD,wN,wM (madd with wzr)"""
+        self._w(0x1B007C00 | rm << 16 | rn << 5 | rd)
+
+    def umull(self, rd, rn, rm):
+        """umull xD,wN,wM"""
+        self._w(0x9BA07C00 | rm << 16 | rn << 5 | rd)
+
+    def udiv_w(self, rd, rn, rm):
+        self._w(0x1AC00800 | rm << 16 | rn << 5 | rd)
+
     def lsl_wi(self, rd, rn, shift):
         """lsl wD,wN,#shift (ubfm alias)"""
         self._w(0x53000000 | ((32 - shift) % 32) << 16 | (31 - shift) << 10 | rn << 5 | rd)
+
+    def lsr_wi(self, rd, rn, shift):
+        """lsr wD,wN,#shift (ubfm alias)"""
+        self._w(0x53000000 | _imm(shift, 5) << 16 | 31 << 10 | rn << 5 | rd)
 
     # ---- loads and stores -------------------------------------------
     def ldr_x(self, rt, rn, offset=0):
@@ -113,6 +169,34 @@ class Block:
     def ldrb_idx(self, rt, rn, rm):
         """ldrb wT,[xN,xM]"""
         self._w(0x38606800 | rm << 16 | rn << 5 | rt)
+
+    def strb_idx(self, rt, rn, rm):
+        """strb wT,[xN,xM]"""
+        self._w(0x38206800 | rm << 16 | rn << 5 | rt)
+
+    def ldrh_idx(self, rt, rn, rm):
+        """ldrh wT,[xN,xM]"""
+        self._w(0x78606800 | rm << 16 | rn << 5 | rt)
+
+    def strh_idx(self, rt, rn, rm):
+        """strh wT,[xN,xM]"""
+        self._w(0x78206800 | rm << 16 | rn << 5 | rt)
+
+    def ldr_x_idx(self, rt, rn, rm):
+        """ldr xT,[xN,xM]"""
+        self._w(0xF8606800 | rm << 16 | rn << 5 | rt)
+
+    def str_x_idx(self, rt, rn, rm):
+        """str xT,[xN,xM]"""
+        self._w(0xF8206800 | rm << 16 | rn << 5 | rt)
+
+    def ldurb(self, rt, rn, offset):
+        """ldurb wT,[xN,#offset] (signed 9-bit)"""
+        self._w(0x38400000 | _imm(offset, 9, True) << 12 | rn << 5 | rt)
+
+    def sturb(self, rt, rn, offset):
+        """sturb wT,[xN,#offset] (signed 9-bit)"""
+        self._w(0x38000000 | _imm(offset, 9, True) << 12 | rn << 5 | rt)
 
     def ldr_x_idx8(self, rt, rn, rm):
         """ldr xT,[xN,xM,lsl #3]"""
@@ -166,8 +250,7 @@ class Block:
         self._rel(lambda pc: 0x14000000 | _imm((self._target(target) - pc) >> 2, 26, True))
 
     def b_cond(self, cond, target):
-        code = {'eq': 0, 'ne': 1, 'hs': 2, 'lo': 3, 'hi': 8, 'ls': 9, 'ge': 10, 'lt': 11, 'gt': 12, 'le': 13}[cond]
-        self._rel(lambda pc: 0x54000000 | _imm((self._target(target) - pc) >> 2, 19, True) << 5 | code)
+        self._rel(lambda pc: 0x54000000 | _imm((self._target(target) - pc) >> 2, 19, True) << 5 | COND[cond])
 
     def cbz_x(self, rt, target):
         self._rel(lambda pc: 0xB4000000 | _imm((self._target(target) - pc) >> 2, 19, True) << 5 | rt)
@@ -177,6 +260,9 @@ class Block:
 
     def cbnz_w(self, rt, target):
         self._rel(lambda pc: 0x35000000 | _imm((self._target(target) - pc) >> 2, 19, True) << 5 | rt)
+
+    def cbnz_x(self, rt, target):
+        self._rel(lambda pc: 0xB5000000 | _imm((self._target(target) - pc) >> 2, 19, True) << 5 | rt)
 
     def adr(self, rd, target):
         def make(pc):
@@ -189,6 +275,14 @@ class Block:
 
     def nop(self):
         self._w(0xD503201F)
+
+    # ---- cache and barriers ------------------------------------------
+    def dc_civac(self, rt):
+        """dc civac,xT: clean and invalidate the line by VA"""
+        self._w(0xD50B7E20 | rt)
+
+    def dsb_sy(self):
+        self._w(0xD5033F9F)
 
     def raw(self, word):
         self._w(word)

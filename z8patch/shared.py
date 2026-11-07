@@ -6,6 +6,8 @@ from capstone import Cs, CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN
 
 BASE = 0x40160000
 STRING_IDS = {'opengate-nraw': (3137, 5), 'pixelshift': (3142, 5), 'prores': (3147, 6), 'xpan': (3153, 1)}
+_ranges = sorted(STRING_IDS.values())
+require(_ranges[0][0] == 3137 and all(a + n == b for (a, n), (b, _) in zip(_ranges, _ranges[1:])), 'String id ranges must be contiguous')
 TEXT = 0x408D0000
 TABLES = 0x408E0000
 BANK = 0x40980000

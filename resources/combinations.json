@@ -17445,35 +17445,35 @@
       "bytes": 4,
       "purpose": "xpan: display direct input start: record live view running",
       "old_sha256": "64b290e9eaabcd0b6a686edc942abee2a874e206564a25bac4f57d1aeefbd2f7",
-      "new_sha256": "3d40e543b710b5d422c9b033c6c8edc248a4ca3d58c6bfc38c8e8760f3219e83"
+      "new_sha256": "06bab5f55f70acb24481d6f626948af9fdfcd558be06727cf2cfb9db793c6524"
     },
     {
       "offset": "0x14a498",
       "bytes": 4,
       "purpose": "xpan: display direct input stop: record live view stopped",
       "old_sha256": "64b290e9eaabcd0b6a686edc942abee2a874e206564a25bac4f57d1aeefbd2f7",
-      "new_sha256": "c67f3936663cc7404d131a0b900cba9783edb0c337da1a2a919a6abb4b317a7e"
+      "new_sha256": "9932010fec5478663955c28479235f609d1e289c4d7e96a8d30d755f6dcbbd30"
     },
     {
       "offset": "0x14d198",
       "bytes": 4,
       "purpose": "xpan: overlay layer size store: record overlay width and height",
       "old_sha256": "498a50a7ac8002ed1d79c691879ec3d6e2739c30c1b39e039c8e642e898df204",
-      "new_sha256": "d25e9f0ff0bcf9f380cae3435b90aafe69d4cb7034038938e8c271a159929f54"
+      "new_sha256": "28d1a21a9f9755b1fb696ca2bbad080deb4d223728991abb56968edd4cadc464"
     },
     {
       "offset": "0x163a58",
       "bytes": 4,
       "purpose": "xpan: HDMI overlay bank request: sync, then 65:24 bars",
       "old_sha256": "7da3440529885e2ec22cbf5ec51789b1fdcc86d878ffed481489c7a12550ca12",
-      "new_sha256": "0c2c44aa229180537a6eda903e201502f31584f8d155c5fff197db09aa85ca51"
+      "new_sha256": "7581dd530fd836b1208c7a3c41f4742935729819360557b024194557630a17fd"
     },
     {
       "offset": "0x16f9d0",
       "bytes": 4,
       "purpose": "xpan: overlay bank request: paint 65:24 bars first",
       "old_sha256": "ecb77427670ca9262d68ac3056c34639b95aa118fade765396f3c6aa402b3fa9",
-      "new_sha256": "b3fac1c84f9a26d74f3e416596285f145a64c354837a57dd6caa2779697c535d"
+      "new_sha256": "8736f2ee62fa21ac05d9555f5de3e19ddd7417bdb79649300fb24d561d5778d0"
     },
     {
       "offset": "0x1cdca0",
@@ -17501,14 +17501,14 @@
       "bytes": 4,
       "purpose": "xpan: i-menu list apply: image area clears XPan",
       "old_sha256": "95d2cffb06c066451cb855dc082086da02eb0613c6b09b004bdd041fff6cd5d8",
-      "new_sha256": "3b5eb2c4df2c216384c9f7a97d317e1c61d6bf85dbf92b0e27c2085bf7c42529"
+      "new_sha256": "a2428d49284ec9f24179de9ba932ed0420b70f5f142ff4669c0d9e0d946bf290"
     },
     {
       "offset": "0x38a144",
       "bytes": 4,
       "purpose": "xpan: i-menu dial list: XPan icon and label",
       "old_sha256": "d25663ec2e9eb0e6bf068a61cea55d693aae989cfa5fba3389be37d7125ea877",
-      "new_sha256": "e0279eb6d0aee1a49472ae377b49091fc665c24faa520340055231c259fedca8"
+      "new_sha256": "3f8b6d7eaa388b1db237334281635748b314fe656974f3e1777b8e2b12626558"
     },
     {
       "offset": "0x479a1c",
@@ -17533,10 +17533,10 @@
     },
     {
       "offset": "0x766000",
-      "bytes": 3800,
-      "purpose": "xpan: routine: XPan menu row, entry/enable callbacks, flag bank copy",
-      "old_sha256": "c89345dba3801e99ef3d34bb5c5a8b7fd78da6f97bc1de49a151364422b4b55d",
-      "new_sha256": "76f2356aebe7b14ee2b95af2917c2bd347269ad420cfdd8746533b20ba6256dc"
+      "bytes": 4020,
+      "purpose": "xpan: routine: menu row callbacks, flag bank copy, icons, CropArea, Fn+dial, i menu, bars, sync",
+      "old_sha256": "21cc514dface8978cabe2e406e4e2d6b3d0de19765047d1c5695c1013f03011f",
+      "new_sha256": "fadfa8b6fef18b18419299beb342491997d45b874bb90d071de973e03e1c7cc4"
     },
     {
       "offset": "0x767800",
@@ -17597,7 +17597,7 @@
     {
       "offset": "0x76ff00",
       "bytes": 48,
-      "purpose": "xpan: XPan runtime state: size sync, per-unit live view and geometry (zero at load)",
+      "purpose": "xpan: XPan runtime state: active, pending, saved, lock, defer, per-unit live view, clean-up and overlay size (zero at load)",
       "old_sha256": "17b0761f87b081d5cf10757ccc89f12be355c70e2e29df288b65b30710dcbcd1",
       "new_sha256": "17b0761f87b081d5cf10757ccc89f12be355c70e2e29df288b65b30710dcbcd1"
     },
@@ -17921,21 +17921,21 @@
       "bytes": 8,
       "purpose": "xpan: i-menu image area: imenu_open",
       "old_sha256": "ad4a5580fcb38a27446ce09f3044ca06684aaa6e5b4bfe0a6740c9acc8069d83",
-      "new_sha256": "01e8d25baf74deb535d5237ca8ef49ac34425a2bfd53d5dfeb49e8736b8ae6fe"
+      "new_sha256": "431e2c082b603f9878af4ab8bbfe123561bd94cc673939046a423db840614a4b"
     },
     {
       "offset": "0x38bd430",
       "bytes": 8,
       "purpose": "xpan: i-menu image area: imenu_commit",
       "old_sha256": "424153e94a8f1c8b24534ee0b17c75517c7af0009b0a640df532e420b1351265",
-      "new_sha256": "8647bff0ffa25de44e4cdaa6bdc6ffff631ffa0c3d0ce36eb126944e7f8b7511"
+      "new_sha256": "bc1393e96d0845c784c35d3ba1fd0e66a8654395e9fe1c8c689ebdce702f8686"
     },
     {
       "offset": "0x38bd438",
       "bytes": 8,
       "purpose": "xpan: i-menu image area: imenu_rollback",
       "old_sha256": "cf6b4637f2d2ac1b8de2b3f29743138c912352ba24131128d116952d8564180a",
-      "new_sha256": "4a11643e16f6ffdc1283bebd10c1230db5b9aff44c2cccd94ac4c1d43de5020d"
+      "new_sha256": "0d23108a2fa31365f22874cfcd31992db3718f8656c60b34dc86dc95957172f6"
     },
     {
       "offset": "0x4c00ca8",

@@ -9,7 +9,7 @@ import subprocess
 
 sys.dont_write_bytecode = True
 from z8prores.package import Package, PACKAGE_BYTES, RESOURCES, require, require_official_input, sha
-from features import build, compatibility, FEATURES
+from features import build, compatibility, FEATURES, PROTOTYPES
 
 
 def main():
@@ -37,13 +37,16 @@ def main():
         print('1: ProRes quality / ProRes 画质\n2: RAW pre-capture / RAW 预拍摄\n3: Pixel shift merge / 像素偏移合成\n4: Open gate + N-RAW quality / 开放门＋N-RAW 四档\n5: All reviewed features (1-4) / 全选已审核功能（1-4）\n6: Locked menu banks (prototype) / 锁定菜单库（原型）\n7: XPan image area (prototype) / XPan 影像区域（原型）')
         choice=input('Select numbers separated by commas / 用逗号分隔 [1,2,3,4 or 5; add 6 or 7 for prototypes]: ').strip()
         parts=[v.strip() for v in choice.split(',')]
-        extra={'6':'locked-banks','7':'xpan'}
+        extra={str(n):f for n,f in enumerate(PROTOTYPES, 6)}
         reviewed=[f for f in FEATURES if f not in extra.values()]
         base=[p for p in parts if p not in extra]
         require(parts and len(parts)==len(set(parts)) and (base==['5'] or all(p in ('1','2','3','4') for p in base)),
                 'Select 1,2,3,4 or 5 for all reviewed features; add 6 or 7 for prototypes')
         a.features=(reviewed if base==['5'] else [reviewed[int(p)-1] for p in base])+[extra[p] for p in parts if p in extra]
     selected = a.features or ['prores']
+    prototypes=[f for f in selected if f in PROTOTYPES]
+    if prototypes:
+        print('WARNING: prototype feature(s) '+', '.join(prototypes)+': not reviewed, not camera-tested; source checkout only', file=sys.stderr)
     require(a.firmware.is_file(), 'Input must be a regular firmware file')
     require(a.firmware.stat().st_size == PACKAGE_BYTES, 'Unsupported firmware length')
     if not a.check:

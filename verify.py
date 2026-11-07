@@ -71,6 +71,8 @@ def verify_pair(original, candidate, features=None, *, expected_version=None, ex
     need(a[:112] == b[:112] and a[128:581844] == b[128:581844] and
          a[82389555:-16] == b[82389555:-16], 'Non-EG module or header changed')
     old, new = a[581844:82389555], b[581844:82389555]
+    # Feature names, order and detection offsets are kept here by hand (no builder import): keep them in step with
+    # features.FEATURES and each feature's first hook word.
     order=('prores','precapture','pixelshift','opengate-nraw','locked-banks','xpan')
     recipes=json.loads((HERE/'resources/combinations.json').read_text())
     need(recipes['schema']==2,'Unsupported recipe schema')
@@ -113,7 +115,8 @@ def verify_pair(original, candidate, features=None, *, expected_version=None, ex
         end = hi
     need(old[end:] == new[end:], 'Unlisted final change')
     return dict(status='PASS', input_sha256=sha(original), output_sha256=sha(candidate),
-                output_identity=identity.decode(), features=sorted(features), patch_matches_reviewed_profile=True,
+                output_identity=identity.decode(), features=sorted(features), profile_id=profile['id'],
+                patch_matches_reviewed_profile=True,
                 official_input_verified=True, requested_identity_checked=expected_version is not None,
                 requested_features_checked=requested_features,
                 all_non_patch_EG_bytes_preserved=True, other_modules_preserved=True,
